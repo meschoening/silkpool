@@ -1,0 +1,13 @@
+{{/* A state's glyph, from a Glyph: 16 px for a state, 14 px in a slot row. Only starting and draining move. */}}
+{{define "glyph"}}<svg class="g g-{{.Name}}" width="{{.Size}}" height="{{.Size}}" viewBox="0 0 16 16" aria-hidden="true">
+{{- if eq .Name "available"}}<circle cx="8" cy="8" r="4.5" fill="currentColor"/>
+{{- else if eq .Name "busy"}}<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="3" fill="currentColor"/>
+{{- else if eq .Name "draining"}}<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-opacity=".2" stroke-width="1.5"/><circle class="g-drain" cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5" pathLength="100" stroke-dasharray="100 100"/><circle cx="8" cy="8" r="3" fill="currentColor"/>
+{{- else if eq .Name "drained"}}<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+{{- else if eq .Name "starting"}}<circle class="g-spin" cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.2 3"/>
+{{- else if eq .Name "degraded"}}<circle cx="8" cy="8" r="7" fill="var(--amber)"/><rect x="7.15" y="3.6" width="1.7" height="5.4" rx=".85" fill="var(--on-amber)"/><circle cx="8" cy="11.5" r="1.05" fill="var(--on-amber)"/>
+{{- else if eq .Name "lastknown"}}<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="1.4 2.6"/>
+{{- end}}</svg>{{end}}
+
+{{/* The glyph, keyed so the live-update script swaps it whole, with its pop, when the state changes. */}}
+{{define "glyph-key"}}<span class="gk" data-key="g-{{.Name}}">{{template "glyph" .}}</span>{{end}}

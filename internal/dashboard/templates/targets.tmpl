@@ -1,0 +1,60 @@
+{{/* Targets: each target with its kind, App and nodes, the default for new nodes, Remove, what an organization target serves, and its runs-on lines; then "Add a target…", and the pool label. A refusal shows where its form is. */}}
+{{define "main"}}<div class="page">
+<div class="head"><div><h1 class="h1">Targets</h1><p class="meta">Where runners register. Silkpool serves nothing else.</p></div></div>
+<div class="wide">
+<ul class="tgs">
+{{- range .Targets}}
+<li class="tg" data-key="{{.Key}}">
+<div class="row"><span><b>{{.Title}}</b>{{if .Default}} <span class="mark">Default for new nodes</span>{{end}}</span><span class="btns">{{if not .Default}}<form method="post" action="/targets/default"><input type="hidden" name="target" value="{{.Key}}"><button class="lnk">Make default</button></form>{{end}}<form method="post" action="/targets/remove"><input type="hidden" name="target" value="{{.Key}}"><button class="lnk">Remove</button></form></span></div>
+<p class="meta">{{.Meta}}</p>
+{{- with .Serves}}
+<p class="meta">{{.}}</p>
+{{- end}}
+{{- with .GroupFailed}}
+<p class="meta amber">{{.}}</p>
+{{- end}}
+{{- with .Lost}}
+<p class="meta amber">{{.}}</p>
+{{- end}}
+{{- if eq $.RefusedIn .Key}}
+<p class="amber" role="alert">{{$.Refusal}}</p>
+{{- end}}
+<div class="lines">{{range .RunsOn}}{{template "copy" .}}{{else}}<p class="meta">Its runs-on lines show once a node uses it.</p>{{end}}</div>
+</li>
+{{- else}}
+<li class="tg"><p class="meta">No targets yet. Nodes register their runners in a target, so add one.</p></li>
+{{- end}}
+</ul>
+{{- if .Adding}}
+<form class="adder" method="post" action="/targets">
+{{- range .Offers}}
+<p class="h2">{{.Account}}</p>
+<div class="opts">
+{{- range .Candidates}}
+<label class="opt"><input type="radio" name="target" value="{{.Target}}"{{if eq .Target $.Pick}} checked{{end}}{{if .Disabled}} disabled{{end}} required><span><span class="opt-t">{{.Title}}</span><span class="meta">{{.Meta}}</span></span></label>
+{{- end}}
+</div>
+{{- end}}
+{{- range .Failed}}
+<p class="amber">{{.}}</p>
+{{- end}}
+{{- if eq .RefusedIn "add"}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- end}}
+<div class="btns"><a class="btn" href="/targets">Cancel</a><button class="btn is-primary">Add target</button></div>
+</form>
+{{- else}}
+<div class="adder"><a class="lnk is-ink" href="/targets?add">Add a target…</a></div>
+{{- end}}
+<h2 class="h2 sec">Pool label</h2>
+{{- if .Renaming}}
+<form class="btns" method="post" action="/targets/pool-label"><input class="inp" name="label" value="{{.Draft}}" aria-label="Pool label" required autocomplete="off" spellcheck="false"><button class="btn is-sm is-primary">Save</button><a class="lnk" href="/targets">Cancel</a></form>
+{{- if eq .RefusedIn "pool"}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- end}}
+{{- else}}
+<div class="btns"><span class="mark is-own">{{.PoolLabel}}</span><a class="lnk" href="/targets?rename">Rename</a></div>
+{{- end}}
+<p class="meta">Every runner carries the pool label, its OS and its architecture, plus the node's own labels. Never <code>self-hosted</code>, so generic self-hosted jobs stay off the pool.</p>
+</div>
+</div>{{end}}

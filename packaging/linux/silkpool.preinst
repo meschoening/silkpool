@@ -1,0 +1,30 @@
+#!/bin/sh
+# The silkpool package's preinstall script (ADR 0013). dpkg runs it with
+# "install" or "upgrade" and the old and new versions, and rpm with the
+# number of copies there will be, 2 on an upgrade. It refuses a
+# downgrade, which the agent's store would refuse anyway.
+set -e
+
+refuse() {
+	echo "Refusing to downgrade silkpool from $1 to $2: Silkpool can't go back a version." >&2
+	exit 1
+}
+
+case "$1" in
+upgrade)
+	if dpkg --compare-versions "$2" gt "$3"; then
+		refuse "$2" "$3"
+	fi
+	;;
+install | abort-upgrade) ;;
+*)
+	if [ "$1" -ge 2 ] 2>/dev/null; then
+		new='@RPM_VERSION@'
+		for old in $(rpm -q --queryformat '%{VERSION}-%{RELEASE}\n' silkpool); do
+			if [ "$(rpm --eval "%{lua: print(rpm.vercmp('$old', '$new'))}")" = 1 ]; then
+				refuse "$old" "$new"
+			fi
+		done
+	fi
+	;;
+esac

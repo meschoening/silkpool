@@ -1,0 +1,23 @@
+{{/* Auto-resume, from a Node: the switch, the schedule with Edit, and what pausing now would do. The switch posts the settings with On flipped, and the revision they were read at. Edit opens the editor at that revision, which the draft keeps. */}}
+{{define "auto-resume"}}{{$a := .Node.Availability.AutoResume}}<div class="ar" data-key="auto-resume">
+<form class="row" method="post" action="{{.Post}}/auto-resume"><b class="h2">Auto-resume</b>{{template "auto-resume-fields" $a}}<input type="hidden" name="on" value="{{if not $a.On}}1{{end}}"><input type="hidden" name="revision" value="{{.Node.Availability.Revision}}"><button class="sw{{if $a.On}} is-on{{end}}" aria-pressed="{{$a.On}}" aria-label="{{if $a.On}}Turn auto-resume off{{else}}Turn auto-resume on{{end}}"{{if .Locked}} disabled{{end}}></button></form>
+<div class="row"><span class="meta">{{autoResume $a}}</span>{{if .Locked}}<span class="lnk is-off">Edit</span>{{else}}<a class="lnk" href="{{.Post}}?edit=auto-resume&amp;revision={{.Node.Availability.Revision}}">Edit</a>{{end}}</div>
+<p class="meta">{{.AutoResumePreview}}</p>
+</div>{{end}}
+
+{{define "auto-resume-fields"}}<input type="hidden" name="time" value="{{.Time}}">{{range weekdays}}{{if $.Days.Has .Day}}<input type="hidden" name="days" value="{{.Day | printf "%d"}}">{{end}}{{end}}<input type="hidden" name="zone" value="{{zoneName .Zone}}">{{end}}
+
+{{/* The auto-resume editor, from an Editor: the switch, the time, the days, the zone, a preview of the draft, then Cancel or Save. */}}
+{{define "auto-resume-editor"}}<form class="ed" method="post" action="{{.Post}}/auto-resume" data-key="auto-resume"><input type="hidden" name="revision" value="{{.Revision}}">
+<label class="row"><b class="h2">Auto-resume</b><input class="sw" type="checkbox" name="on" value="1"{{if .Draft.On}} checked{{end}}></label>
+<label class="ed-r"><span>Time</span><input class="inp" type="time" name="time" value="{{.Draft.Time}}" required></label>
+<fieldset class="ed-r"><legend>Days</legend><span class="days">
+{{- range weekdays}}<label class="day" title="{{.Name}}"><input type="checkbox" name="days" value="{{.Day | printf "%d"}}"{{if $.Draft.Days.Has .Day}} checked{{end}}><span>{{.Letter}}</span></label>{{end -}}
+</span></fieldset>
+<label class="ed-r"><span>Time zone</span><select class="inp" name="zone">
+{{- $zone := zoneName .Draft.Zone}}
+{{- range .Zones}}<option{{if eq . $zone}} selected{{end}}>{{.}}</option>{{end -}}
+</select></label>
+<p class="meta">{{.Preview}}</p>
+<div class="btns"><a class="btn" href="{{.Post}}">Cancel</a><button class="btn is-primary">Save</button></div>
+</form>{{end}}

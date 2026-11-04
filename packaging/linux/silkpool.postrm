@@ -1,0 +1,18 @@
+#!/bin/sh
+# The silkpool package's postremove script (ADR 0013). dpkg runs it with
+# "remove", "purge" or "upgrade", and rpm with the number of copies left,
+# 0 on removal. The preremove script let the removal go ahead only once
+# the machine wasn't enrolled, so with the binary and the units, it
+# deletes everything else Silkpool put on the machine: the agent's state
+# folder, with the runner application's installs, and its log folder.
+set -e
+
+case "$1" in
+remove | purge | 0) ;;
+*) exit 0 ;;
+esac
+
+rm -rf /var/lib/silkpool /var/log/silkpool
+if [ -d /run/systemd/system ]; then
+	systemctl daemon-reload
+fi

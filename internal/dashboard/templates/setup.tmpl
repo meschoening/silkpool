@@ -1,0 +1,92 @@
+{{/* First run: the checklist, in a centred column. */}}
+{{define "main"}}<div class="su">
+{{template "logo"}}
+<h1 class="title">Set up your Hub</h1>
+<p class="meta">{{.Host}} · step {{.Number}} of {{.Of}}</p>
+{{- if .Resumed}}
+<p class="sub">Picking up where you left off. Each step is saved as it completes.</p>
+{{- end}}
+{{- if .WithCode}}
+<p class="sub">Opened with the one-time setup code from <code>silkpool-hub init</code>. It works until you sign in, or for 24 h.</p>
+{{- end}}
+<ol class="su-steps">
+{{- range .Steps}}
+<li class="su-st is-{{.State}}" id="step-{{.Name}}"><span class="su-i">{{if eq .State "done"}}✓{{else}}{{.Number}}{{end}}</span><div><div class="su-t">{{.Title}}</div>
+{{- if eq .State "done"}}<p class="meta">{{.Done}}</p>
+{{- else if eq .State "now"}}<div class="su-b">{{template "step" (step .Name $.Now)}}</div>
+{{- end}}</div></li>
+{{- end}}
+</ol>
+</div>{{end}}
+
+{{/* The open step's body, from its name and what it shows. */}}
+{{define "step"}}{{$n := .Now}}
+{{- if eq .Name "checks"}}
+{{- with $n.Checks}}
+<ul class="checks">
+{{- if .Reached}}
+<li>✓ <span>Reaches api.github.com</span></li>
+<li class="amber">! <span>{{$n.ClockOff}} GitHub rejects App sign-ins from a clock that far off. Turn on time sync (<code>timedatectl set-ntp true</code>), then check again.</span></li>
+{{- else}}
+<li class="amber">! <span>The Hub can't reach api.github.com: {{.Problem}}. Check its network, DNS and any proxy, then check again.</span></li>
+{{- end}}
+</ul>
+<form class="btns" method="post" action="/setup/checks"><button class="btn is-primary">Check again</button></form>
+{{- else}}
+<p>The Hub must reach api.github.com, and its clock must be within a minute of GitHub's for App sign-ins.</p>
+<form class="btns" method="post" action="/setup/checks"><button class="btn is-primary">Run the checks</button></form>
+{{- end}}
+{{- else if eq .Name "account"}}
+<form class="su-b" method="post" action="/setup/account">
+<div class="opts">
+<label class="opt"><input type="radio" name="kind" value="personal"{{if eq $n.Kind "personal"}} checked{{end}} required><span><span class="opt-t">My personal account</span><span class="meta">Runners register on your repositories. The App asks for Administration: write, Actions: read and Metadata: read.</span></span></label>
+<label class="opt"><input type="radio" name="kind" value="organization"{{if eq $n.Kind "organization"}} checked{{end}}><span><span class="opt-t">An organization</span><span class="meta">Runners register in one of its runner groups. The App asks for Self-hosted runners: write, Actions: read and Metadata: read.</span><input class="inp" name="org" value="{{$n.Org}}" placeholder="Its name on GitHub" aria-label="The organization's name on GitHub" autocomplete="off" spellcheck="false"></span></label>
+</div>
+{{- template "refusal" $n}}
+<div class="btns"><button class="btn is-primary">Continue</button></div>
+</form>
+{{- else if eq .Name "create-app"}}
+<p>GitHub opens a form for a private App named <b>{{$n.Manifest.Name}}</b>, filled in by the Hub. You can rename it there. Its webhook stays off: the Hub polls GitHub instead.</p>
+{{- template "refusal" $n}}
+<form class="btns" method="post" action="{{$n.Manifest.Form}}"><input type="hidden" name="manifest" value="{{$n.Manifest.JSON}}"><button class="btn is-primary">Create on GitHub ↗</button></form>
+{{- else if eq .Name "sign-in"}}
+<p>Sign in through the new App. From then on, only your GitHub account can sign in to this Hub, and the setup code stops working.</p>
+{{- template "refusal" $n}}
+<form class="btns" method="post" action="/sign-in" data-native><button class="btn is-primary">Sign in with GitHub</button></form>
+{{- else if eq .Name "install"}}
+{{- if $n.Organization}}
+<p>Install the App on {{$n.Account}}. Organization runners serve whatever their runner group allows, whichever repositories the installation includes.</p>
+{{- else}}
+<p>Install the App on {{$n.Account}}. Choose <b>Only select repositories</b>, and pick the private repositories Silkpool may serve.</p>
+{{- end}}
+{{- template "refusal" $n}}
+<div class="btns"><a class="btn is-primary" href="{{$n.InstallLink}}">Install on GitHub ↗</a></div>
+{{- else if eq .Name "enable"}}
+{{- if $n.Organization}}
+<p>Choose the runner group whose repositories this pool serves. Silkpool never creates or edits runner groups.</p>
+{{- else}}
+<p>Silkpool serves none of the installed repositories until you add them here. Nodes register their runners in a target.</p>
+{{- end}}
+<form class="su-b" method="post" action="/setup/target">
+<div class="opts">
+{{- range $n.Candidates}}
+<label class="opt"><input type="radio" name="target" value="{{.Target}}"{{if eq .Target $n.Pick}} checked{{end}}{{if .Disabled}} disabled{{end}}><span><span class="opt-t">{{.Title}}</span><span class="meta">{{.Meta}}</span></span></label>
+{{- else}}
+<p class="meta">GitHub lists nothing this App can serve yet.</p>
+{{- end}}
+</div>
+{{- range $n.Failed}}
+<p class="amber">{{.}}</p>
+{{- end}}
+{{- template "refusal" $n}}
+<div class="btns"><button class="btn is-primary">Add target</button></div>
+</form>
+{{- else if eq .Name "done"}}
+<p>Your Hub is ready, and its pool is empty. Enroll a machine to give it work.</p>
+<form class="btns" method="post" action="/setup/done"><button class="btn is-primary">Open the dashboard</button></form>
+{{- end}}
+{{- end}}
+
+{{/* Why the open step's last try was refused, if it was. */}}
+{{define "refusal"}}{{with .Refusal}}
+<p class="amber" role="alert">{{.}}</p>{{end}}{{end}}

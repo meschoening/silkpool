@@ -1,0 +1,74 @@
+# Builds a Silkpool release when its tag is pushed, from the source at
+# that tag: the node's and the Hub's .deb and .rpm packages for amd64 and
+# arm64, and install.sh, with packaging/build, then SHA256SUMS over them.
+# They go on a draft release, whose files are checked before it's
+# published. A rerun replaces the draft's files.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write # to make the draft release and attach its files
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The toolchain go.mod names, with no cache, so a release is built
+      # from nothing but its tag's source and its modules' checksums.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build the packages and install.sh
+        run: go run ./packaging/build -version "${GITHUB_REF_NAME#v}" -out dist
+
+      # One line per file, by bare name, in the C locale's order, as
+      # sha256sum prints it. install.sh checks each package against it.
+      - name: Write SHA256SUMS
+        working-directory: dist
+        run: |
+          export LC_ALL=C
+          sha256sum -- * >../SHA256SUMS
+          mv ../SHA256SUMS SHA256SUMS
+
+      - name: Attach them to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$GITHUB_REF_NAME
+          version=${tag#v}
+          repo=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+          notes="Silkpool $version. Install or upgrade it with [the operator docs]($repo/tree/$tag/docs#readme) as they stood for this release. \`SHA256SUMS\` lists every file's SHA-256. Built from [the source at $tag]($repo/tree/$tag) by [this run]($repo/actions/runs/$GITHUB_RUN_ID)."
+          draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || true)
+          case $draft in
+            true)
+              gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+              ;;
+            false)
+              echo "::error::$tag is published already, so its files stay as they are"
+              exit 1
+              ;;
+            *)
+              args=(--draft --verify-tag --title "Silkpool $version" --notes "$notes")
+              if [[ $version == *-* ]]; then args+=(--prerelease); fi
+              gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" "${args[@]}"
+              ;;
+          esac

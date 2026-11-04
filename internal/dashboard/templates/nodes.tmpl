@@ -1,0 +1,29 @@
+{{/* Nodes, the fleet view. */}}
+{{define "main"}}{{template "nodes" .}}{{end}}
+
+{{/* The fleet, the page's live part: the header, with the pool in a sentence and Add node, then a hairline table with a row per node, or the empty pool's way to enroll the first. A Degraded row has the amber rule; a node that isn't connected is greyed, with its last state's word and the dashed glyph. */}}
+{{define "nodes"}}<div class="page" id="nodes">
+<div class="head"><div><h1 class="h1">Nodes</h1>{{with .Rows}}<p class="meta">{{nodes (len .)}} · {{$.Pool}}</p>{{end}}</div><a class="btn is-primary" href="/nodes/add">Add node</a></div>
+{{- if .Rows}}
+<table class="fleet">
+<thead><tr><th>Node</th><th>State</th><th>Slots</th><th>Now</th><th>Auto-resume</th><th>Target</th></tr></thead>
+<tbody>
+{{- range .Rows}}
+<tr{{if .Node.LastKnown}} class="is-lastknown"{{else if .Node.Amber}} class="is-degraded"{{end}} data-key="{{.ID}}">
+<td><a class="nm-l" href="{{.Path}}">{{.Node.Name}}</a>{{if .Removing}} <span class="mark">Removing</span>{{end}}<div class="meta">{{.Platform}}{{if and .Platform .Notices}} · {{end}}{{with .Notices}}<span class="ink">{{count . "notice"}}</span>{{end}}</div></td>
+<td>{{template "word" .Node}}<div class="meta">{{.Age}}</div></td>
+<td><span class="pips">{{range .Pips}}<i{{with .}} class="{{.}}"{{end}}></i>{{end}}</span><div class="meta">{{.Busy}} of {{.Limit}}</div></td>
+<td class="now">{{template "doing" .Doing}}</td>
+<td>{{if .Resume}}{{.Resume}}<div class="meta">{{.Days}}</div>{{else}}<span class="dim">Off</span>{{end}}</td>
+<td class="dim">{{or .Target "None"}}</td>
+</tr>
+{{- end}}
+</tbody>
+</table>
+{{- else}}
+<div class="empty"><p class="lead">No nodes yet.</p><p class="sub">Enroll a machine to give the pool work. It joins paused, so nothing runs until you resume it.</p><div class="btns"><a class="btn is-primary" href="/nodes/add">Add node</a></div></div>
+{{- end}}
+</div>{{end}}
+
+{{/* What a node is doing, in one line: its jobs, then what follows them, or the line alone, in amber for a Degraded reason. */}}
+{{define "doing"}}{{if .Amber}}<span class="amber">{{.Line}}</span>{{else}}{{range $i, $job := .Jobs}}{{if $i}}, {{end}}<b>{{$job}}</b>{{end}}{{with .Line}}<span class="dim">{{if $.Jobs}}, {{end}}{{.}}</span>{{end}}{{end}}{{end}}

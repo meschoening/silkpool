@@ -1,0 +1,20 @@
+#!/bin/sh
+# The silkpool package's preremove script (ADR 0013). dpkg runs it with
+# "remove" or "upgrade", and rpm with the number of copies there will be,
+# 0 on removal. It refuses removal while the machine is enrolled, which
+# the running agent answers, then stops and disables the agent. An
+# upgrade leaves the agent running for the new postinstall to restart.
+set -e
+
+case "$1" in
+remove | 0) ;;
+*) exit 0 ;;
+esac
+
+if [ -x /usr/bin/silkpool ]; then
+	/usr/bin/silkpool uninstall-check
+fi
+systemctl disable silkpool.service
+if [ -d /run/systemd/system ]; then
+	systemctl stop silkpool.service
+fi

@@ -1,0 +1,10 @@
+{{/* Before the operator is recorded, only the setup link opens the dashboard. */}}
+{{define "main"}}<div class="su">
+{{template "logo"}}
+<h1 class="title">Set up your Hub</h1>
+{{- with .Refusal}}
+<p class="amber alert" role="alert">{{.}}</p>
+{{- else}}
+<p class="sub">Open the setup link <code>silkpool-hub init</code> printed on the Hub's host. To make a new one, run <code>sudo silkpool-hub setup-code</code> there.</p>
+{{- end}}
+</div>{{end}}

@@ -1,0 +1,123 @@
+{{/* A node's own page: the breadcrumb and the node's head, then its notices, state, slots and commands on the left, and auto-resume, what it runs jobs for and its removal on the right. Each part is live. A form's refusal shows below its part, where the stream leaves it. */}}
+{{define "main"}}<div class="page">
+<div class="crumb"><a class="lnk" href="/">Nodes</a> / {{.Node.Name}}</div>
+{{template "node-head" .}}
+<div class="cols">
+<div class="col">
+{{template "node-state" .}}
+{{- if eq .RefusedIn "commands"}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- end}}
+</div>
+<div class="col">
+{{template "node-auto-resume" .}}
+{{- if eq .RefusedIn "auto-resume"}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- end}}
+{{template "node-settings" .}}
+{{- if eq .RefusedIn "settings"}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- end}}
+{{template "node-remove" .}}
+{{- if eq .RefusedIn "remove"}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- end}}
+</div>
+</div>
+</div>{{end}}
+
+{{/* The name, the state chip, the Removing mark, and the OS line with how long it has shown its state, or when it was last seen. */}}
+{{define "node-head"}}<div class="nh" id="node-head"><span class="h1">{{.Node.Name}}</span>{{template "chip" .Node}}{{if .Removing}}<span class="mark">Removing</span>{{end}}<span class="meta">{{with .Platform}}{{.}} · {{end}}{{if .Node.LastKnown}}{{.Age}}{{else}}{{.Node.State}}{{with .Age}} {{.}}{{end}}{{end}}</span></div>{{end}}
+
+{{/* The left column: the node's notices and the Hub's, the state sentence, the slots with the slot-limit stepper, the budget with a stepper for each half, and the commands. */}}
+{{define "node-state"}}<div class="stack" id="node-state">
+{{- template "notices" .Node}}
+{{- with .HubNotices}}
+<div class="notes" data-key="hub-notices">
+{{- range .}}
+<div class="note"><p>{{.Text}}</p><p class="meta">{{.Clears}}</p></div>
+{{- end}}
+</div>
+{{- end}}
+{{template "sentence" .Node}}
+<div class="row sh"><h2 class="h2">Slots</h2><form class="step" method="post" action="{{.Node.Post}}/slot-limit"><span class="meta">Slot limit</span><input type="hidden" name="revision" value="{{.Revision}}"><button name="limit" value="{{.Fewer}}" aria-label="Fewer slots"{{if or .Node.Locked (not .Fewer)}} disabled{{end}}>−</button><b>{{.Limit}}</b><button name="limit" value="{{.More}}" aria-label="More slots"{{if or .Node.Locked (not .More)}} disabled{{end}}>+</button></form></div>
+{{- if .Node.Rows}}
+{{template "slots" .Node}}
+{{- else}}
+<p class="meta">No slots are open while it's paused.</p>
+{{- end}}
+{{template "budget" .}}
+{{template "controls" .}}
+</div>{{end}}
+
+{{/* The Budget row: a stepper for memory and one for CPUs, each down to none and up to the machine's size, then the budget in words. A Mac has none, and no control. */}}
+{{define "budget"}}<div class="stack" data-key="budget"><div class="row sh"><h2 class="h2">Budget</h2>
+{{- if .Budget.Mac}}<span class="meta">Not available on macOS</span></div>
+{{- else}}<div class="btns">
+{{- with .Budget.Memory}}<form class="step" method="post" action="{{$.Node.Post}}/budget"><span class="meta">Memory</span><input type="hidden" name="revision" value="{{$.Revision}}"><button name="memory" value="{{.Fewer}}" aria-label="Less memory"{{if or $.Node.Locked (not .Fewer)}} disabled{{end}}>−</button><b>{{.Shown}}</b><button name="memory" value="{{.More}}" aria-label="More memory"{{if or $.Node.Locked (not .More)}} disabled{{end}}>+</button></form>{{end}}
+{{- with .Budget.CPUs}}<form class="step" method="post" action="{{$.Node.Post}}/budget"><span class="meta">CPUs</span><input type="hidden" name="revision" value="{{$.Revision}}"><button name="cpus" value="{{.Fewer}}" aria-label="Fewer CPUs"{{if or $.Node.Locked (not .Fewer)}} disabled{{end}}>−</button><b>{{.Shown}}</b><button name="cpus" value="{{.More}}" aria-label="More CPUs"{{if or $.Node.Locked (not .More)}} disabled{{end}}>+</button></form>{{end}}
+</div></div>
+<p class="meta">{{.Budget.Line}}</p>
+{{- end}}
+</div>{{end}}
+
+{{/* The commands: the verbs and Stop now, or Stop now's confirmation naming the jobs, or, while it's being removed, only Stop now. Then where the last command is. */}}
+{{define "controls"}}<div class="ctl" data-key="controls">
+{{- if eq .Confirm "stop"}}
+<div class="cf"><p>{{.StopConfirm}}</p><form class="btns" method="post" action="{{.Node.Post}}/command"><input type="hidden" name="verb" value="stop"><a class="btn" href="{{.Node.Post}}">Keep running</a><button class="btn is-red">Stop and cancel</button></form></div>
+{{- else if .Removing}}
+<p class="meta">Being removed. Only Emergency stop is accepted.</p>
+{{- if and .Jobs (not .Node.LastKnown)}}
+<div class="btns"><a class="lnk is-red" href="{{.Node.Post}}?confirm=stop">Stop now…</a></div>
+{{- end}}
+{{- else}}
+<form class="btns" method="post" action="{{.Node.Post}}/command"><input type="hidden" name="revision" value="{{.Revision}}">
+{{- range .Verbs}}<button class="btn{{if .Primary}} is-primary{{end}}" name="verb" value="{{.Kind}}"{{if $.Node.Locked}} disabled{{end}}>{{.Label}}</button>{{end}}
+{{- if .Jobs}}{{if .Node.Locked}}<span class="lnk is-red is-off">Stop now…</span>{{else}}<a class="lnk is-red" href="{{.Node.Post}}?confirm=stop">Stop now…</a>{{end}}{{end -}}
+</form>
+{{- if .Node.LastKnown}}
+<p class="meta">{{.Node.CantSend}}</p>
+{{- end}}
+{{- end}}
+{{- with .Status}}
+<p class="meta{{if $.Sending}} pending{{end}}">{{if $.Sending}}{{template "glyph-key" (glyph "starting" 12)}}{{end}}{{.}}</p>
+{{- end}}
+</div>{{end}}
+
+{{/* Auto-resume, or its editor while it's open. */}}
+{{define "node-auto-resume"}}<div class="box" id="node-auto-resume">{{if .Editor}}{{template "auto-resume-editor" .Editor}}{{else}}{{template "auto-resume" .Node}}{{end}}</div>{{end}}
+
+{{/* What the node runs jobs for: its name, target and labels, which the Hub owns, so they stay editable while it isn't connected; its runs-on line; and the machine. */}}
+{{define "node-settings"}}<div class="box" id="node-settings"><h2 class="h2">Runs jobs for</h2>
+<dl class="kv">
+<dt>Name</dt><dd>
+{{- if .Renaming}}<form class="btns" method="post" action="{{.Node.Post}}/rename"><input class="inp" name="name" value="{{.Draft}}" aria-label="New name" required autocomplete="off" spellcheck="false"><button class="btn is-sm is-primary">Save</button><a class="lnk" href="{{.Node.Post}}">Cancel</a></form>
+{{- else}}{{.Node.Name}}{{if not .Removing}} <a class="lnk" href="{{.Node.Post}}?rename">Rename</a>{{end}}{{end}}</dd>
+<dt>Target</dt><dd>
+{{- if .Removing}}{{or .Target "None"}}
+{{- else}}<form class="btns" method="post" action="{{.Node.Post}}/target"><select class="inp" name="target" aria-label="Target" required>{{if not .Target}}<option value="" selected>Choose a target…</option>{{end}}{{range .Targets}}<option{{if eq . $.Target}} selected{{end}}>{{.}}</option>{{end}}</select><button class="btn is-sm">Save</button></form>
+<p class="meta">Idle runners move at once; busy ones finish first.</p>
+{{- end}}</dd>
+<dt>Labels</dt><dd><div class="btns labels"><span class="mark">{{.PoolLabel}}</span>{{with .OS}}<span class="mark">{{.}}</span><span class="mark">{{$.Arch}}</span>{{end}}
+{{- range .Labels}}{{if $.Removing}}<span class="mark is-own">{{.}}</span>{{else}}<form class="mark is-own" method="post" action="{{$.Node.Post}}/labels/remove"><input type="hidden" name="label" value="{{.}}">{{.}}<button class="lnk" aria-label="Remove {{.}}">×</button></form>{{end}}{{end}}</div>
+{{- if not .Removing}}
+<form class="btns" method="post" action="{{.Node.Post}}/labels"><input class="inp" name="label" placeholder="Add a label" aria-label="Add a label" required autocomplete="off" spellcheck="false"><button class="btn is-sm">Add</button></form>
+{{- end}}
+{{- with .SelfHosted}}
+<p class="meta amber">{{.}}</p>
+{{- end}}</dd>
+<dt>Jobs use</dt><dd>{{with .RunsOn}}{{template "copy" .}}{{else with .NoRunsOn}}<p class="meta">{{.}}</p>{{else}}<p class="meta">Its runs-on line shows once it has connected.</p>{{end}}</dd>
+<dt>Machine</dt><dd>{{or .Platform "Not connected yet"}}</dd>
+</dl>
+</div>{{end}}
+
+{{/* Removing the node from the Hub, behind its confirmation, which says what happens to a connected node and to one that isn't. */}}
+{{define "node-remove"}}<div class="box" id="node-remove">
+{{- if .Removing}}
+<p class="meta">Being removed. It leaves the Hub once it's drained and its slot accounts are deleted.</p>
+{{- else if eq .Confirm "remove"}}
+<div class="cf"><p>{{.RemoveConfirm}}</p><form class="btns" method="post" action="{{.Node.Post}}/remove"><a class="btn" href="{{.Node.Post}}">Cancel</a><button class="btn is-primary">Remove {{.Node.Name}}</button></form></div>
+{{- else}}
+<a class="lnk" href="{{.Node.Post}}?confirm=remove">Remove {{.Node.Name}} from the Hub…</a>
+{{- end}}
+</div>{{end}}

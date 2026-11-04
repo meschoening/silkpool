@@ -1,0 +1,19 @@
+#!/bin/sh
+# The silkpool package's postinstall script (ADR 0013). dpkg runs it with
+# "configure", and rpm with the number of copies there are. On a first
+# install and on an upgrade alike, it enables the agent's unit and
+# restarts it, which starts it if it isn't running: the agent idles until
+# the machine is enrolled. Without a running systemd, as when an image is
+# built, it only enables the unit.
+set -e
+
+case "$1" in
+configure | [0-9]*) ;;
+*) exit 0 ;;
+esac
+
+systemctl enable silkpool.service
+if [ -d /run/systemd/system ]; then
+	systemctl daemon-reload
+	systemctl restart silkpool.service
+fi

@@ -1,0 +1,33 @@
+# The Silkpool agent, which the node package installs as
+# /usr/lib/systemd/system/silkpool.service (ADR 0013). It runs as root,
+# and starts each runner in a transient unit of its own in
+# silkpool.slice, which outlives it (ADR 0006).
+[Unit]
+Description=Silkpool agent
+Documentation=https://github.com/meschoening/silkpool
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/silkpool agent
+# /var/lib/silkpool stays open to every account, so that each slot
+# account reaches its own folders there: the runner application refuses
+# to start unless it can read every folder above its root. The agent
+# keeps its own state and the installs closed (ADR 0008), and each
+# slot's units hide everything here but the slot's own folder.
+StateDirectory=silkpool
+StateDirectoryMode=0755
+# The agent's own log, and each runner's listener output and copied
+# _diag logs in runners/<runner>/.
+LogsDirectory=silkpool
+LogsDirectoryMode=0700
+# The control channel's socket, which administrators who aren't root
+# reach too (ADR 0008).
+RuntimeDirectory=silkpool
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

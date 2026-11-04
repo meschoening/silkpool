@@ -1,0 +1,25 @@
+#!/bin/sh
+# The silkpool-hub package's postremove script (ADR 0013). dpkg runs it
+# with "remove", "purge" or "upgrade", and rpm with the number of copies
+# left, 0 on removal. Removing the Hub keeps /var/lib/silkpool-hub, the
+# only copy of its App keys and its pool. Purging deletes it, with the
+# units silkpool-hub init wrote; rpm has no purge.
+set -e
+
+case "$1" in
+remove | 0) ;;
+purge)
+	rm -rf /var/lib/silkpool-hub \
+		/etc/systemd/system/silkpool-hub.service.d/tls.conf \
+		/etc/systemd/system/silkpool-hub-certs.path \
+		/etc/systemd/system/silkpool-hub-certs.service
+	if [ -d /etc/systemd/system/silkpool-hub.service.d ]; then
+		rmdir --ignore-fail-on-non-empty /etc/systemd/system/silkpool-hub.service.d
+	fi
+	;;
+*) exit 0 ;;
+esac
+
+if [ -d /run/systemd/system ]; then
+	systemctl daemon-reload
+fi

@@ -1,0 +1,71 @@
+#!/bin/sh
+# The silkpool-hub package's preinstall script (ADR 0013). dpkg runs it
+# with "install" or "upgrade" and the old and new versions, and rpm with
+# the number of copies there will be, 2 on an upgrade. It refuses a
+# downgrade, which the Hub's store would refuse anyway, and an older
+# version over the state folder of a newer one, which a removal keeps.
+# Then it makes the Hub's system user from the sysusers file the package
+# ships, since neither dpkg nor an nfpm .rpm does.
+set -e
+
+state=/var/lib/silkpool-hub
+
+refuse() {
+	echo "Refusing to downgrade silkpool-hub from $1 to $2: Silkpool can't go back a version." >&2
+	exit 1
+}
+
+refuse_state() {
+	echo "Refusing to install silkpool-hub $2: $state holds the state of $1, and Silkpool can't go back a version." >&2
+	exit 1
+}
+
+# kept prints the version in the state folder's package-version file,
+# which every postinstall writes, as the .deb carries it: 1.2.3-rc.1 is
+# 1.2.3~rc.1. With no such file, it prints nothing. The folder is the
+# Hub's account's, so it reads no more than 64 bytes of a regular file,
+# and takes them only if they're one version.
+kept() {
+	[ -f "$state/package-version" ] || return 0
+	v=$(head -c 64 "$state/package-version")
+	case $v in
+	*[!0-9A-Za-z.-]*) ;;
+	[0-9]*.[0-9]*.[0-9]*-*) echo "${v%%-*}~${v#*-}" ;;
+	[0-9]*.[0-9]*.[0-9]*) echo "$v" ;;
+	esac
+}
+
+case "$1" in
+install | upgrade)
+	new='@DEB_VERSION@'
+	if [ "$1" = upgrade ] && dpkg --compare-versions "$2" gt "$new"; then
+		refuse "$2" "$new"
+	fi
+	old=$(kept)
+	if [ -n "$old" ] && dpkg --compare-versions "$old" gt "$new"; then
+		refuse_state "$old" "$new"
+	fi
+	;;
+abort-upgrade) exit 0 ;;
+*)
+	new='@RPM_VERSION@'
+	newer() {
+		[ "$(rpm --eval "%{lua: print(rpm.vercmp('$1', '$2'))}")" = 1 ]
+	}
+	if [ "$1" -ge 2 ] 2>/dev/null; then
+		for old in $(rpm -q --queryformat '%{VERSION}-%{RELEASE}\n' silkpool-hub); do
+			if newer "$old" "$new"; then
+				refuse "$old" "$new"
+			fi
+		done
+	fi
+	old=$(kept)
+	if [ -n "$old" ] && newer "$old-1" "$new"; then
+		refuse_state "$old-1" "$new"
+	fi
+	;;
+esac
+
+systemd-sysusers --replace=/usr/lib/sysusers.d/silkpool-hub.conf - <<'EOF'
+@SYSUSERS@
+EOF

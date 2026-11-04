@@ -1,0 +1,14 @@
+{{/* Sign in with GitHub: every page needs it once setup has recorded the operator. The browser posts its form itself, since the answer sends it on to GitHub. */}}
+{{define "main"}}<div class="su">
+{{template "logo"}}
+<h1 class="title">Sign in</h1>
+{{- if .Reassign}}
+<p class="sub">This Hub's setup link makes the next GitHub sign-in its operator, in place of the one it has.</p>
+{{- else}}
+<p class="sub">Only this Hub's operator can sign in, with their GitHub account.</p>
+{{- end}}
+{{- with .Refusal}}
+<p class="amber alert" role="alert">{{.}}</p>
+{{- end}}
+<form class="btns go" method="post" action="/sign-in" data-native><button class="btn is-primary">Sign in with GitHub</button></form>
+</div>{{end}}

@@ -1,0 +1,6 @@
+{{/* The slot rows, from a Node: number, glyph, what the slot does, how long for, and a second line. Hairlines, no boxes. */}}
+{{define "slots"}}{{with .Rows}}<ol class="sls" data-key="slots">
+{{- range .}}
+<li class="sl{{if .Amber}} is-amber{{else if eq .Glyph "drained"}} is-free{{else if ne .Glyph "busy"}} is-quiet{{end}}" data-key="s{{.Slot}}"><span class="sl-n">{{.Slot}}</span><span class="sl-g">{{template "glyph-key" (glyph .Glyph 14)}}</span><span class="sl-m">{{.Main}}</span><span class="sl-r">{{.Right}}</span>{{with .Sub}}<span class="sl-s">{{.}}</span>{{end}}</li>
+{{- end}}
+</ol>{{end}}{{end}}

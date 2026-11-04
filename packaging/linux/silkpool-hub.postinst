@@ -1,0 +1,34 @@
+#!/bin/sh
+# The silkpool-hub package's postinstall script (ADR 0013). dpkg runs it
+# with "configure", and rpm with the number of copies there are. It
+# writes the package's version beside the Hub's state, for a later
+# preinstall to compare. It never starts the Hub, which silkpool-hub init
+# does once it has set it up, but it restarts a running Hub on an
+# upgrade.
+set -e
+
+state=/var/lib/silkpool-hub
+
+case "$1" in
+configure | [0-9]*) ;;
+*) exit 0 ;;
+esac
+
+# The state folder's package-version file holds the version of the last
+# package installed over it. Removal keeps it with the folder, and
+# purging deletes both. The folder is the Hub's account's once the Hub
+# has run, so the file is made in its parent, root's, and renamed into
+# place, replacing whatever was there, and never written through.
+if [ ! -d "$state" ]; then
+	mkdir -m 0700 "$state"
+fi
+file=$(mktemp "${state%/*}/.silkpool-hub-package-version.XXXXXX")
+echo '@VERSION@' >"$file"
+chmod 0644 "$file"
+chown --reference="$state" "$file"
+mv -fT "$file" "$state/package-version"
+
+if [ -d /run/systemd/system ]; then
+	systemctl daemon-reload
+	systemctl try-restart silkpool-hub.service
+fi

@@ -1,0 +1,31 @@
+# The Silkpool Hub, which the Hub package installs as
+# /usr/lib/systemd/system/silkpool-hub.service (ADR 0013). Installing it
+# doesn't start it: silkpool-hub init does, once it has set the Hub up.
+[Unit]
+Description=Silkpool Hub
+Documentation=https://github.com/meschoening/silkpool
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+User=silkpool-hub
+Group=silkpool-hub
+ExecStart=/usr/bin/silkpool-hub serve
+# The Hub's database, App key files and self-signed certificate. systemd
+# hands an existing folder to silkpool-hub, so what init wrote as root
+# becomes the Hub's.
+StateDirectory=silkpool-hub
+StateDirectoryMode=0700
+# The Hub CLI's socket, which only root uses.
+RuntimeDirectory=silkpool-hub
+RuntimeDirectoryMode=0700
+# Port 443 without setcap, which would clear the ambient set.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

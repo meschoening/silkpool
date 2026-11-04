@@ -1,0 +1,13 @@
+{{/* The notices, from a Node: grey, never states, and amber only for a slot's exposure. One about something that happened shows Dismiss; one about a condition says when it clears instead. */}}
+{{define "notices"}}{{with .Notices}}<div class="notes" data-key="notices">
+{{- range .}}
+<div class="note{{if .Amber}} is-amber{{end}}" data-key="n{{.ID}}">
+<p>{{.Text}}</p>
+{{- if .Clears}}
+<p class="meta">{{.Clears}}</p>
+{{- else}}
+<form class="btns" method="post" action="{{$.Post}}/dismiss">{{with .Link}}<a class="lnk is-ink" href="{{.}}" target="_blank" rel="noreferrer">View run ↗</a>{{end}}<input type="hidden" name="notice" value="{{.ID}}"><button class="lnk is-ink"{{if $.Locked}} disabled{{end}}>Dismiss</button></form>
+{{- end}}
+</div>
+{{- end}}
+</div>{{end}}{{end}}

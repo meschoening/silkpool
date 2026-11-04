@@ -1,0 +1,13 @@
+{{/* The state sentence, from a Node: one sentence that counts the jobs, the Degraded reason's detail, and who set the intent. A last-known report says so. */}}
+{{define "sentence"}}<div class="story{{if .LastKnown}} is-lastknown{{end}}" data-key="sentence">
+<p class="lead">{{.Lead}}</p>
+{{- range .Details}}
+<p class="sub{{if $.Amber}} amber{{end}}">{{.}}</p>
+{{- end}}
+{{- with .Provenance}}
+<p class="meta">{{.}}</p>
+{{- end}}
+{{- if .LastKnown}}
+<p class="meta">{{.Clock.NotConnected .Since}}</p>
+{{- end}}
+</div>{{end}}

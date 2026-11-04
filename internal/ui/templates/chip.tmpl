@@ -1,0 +1,5 @@
+{{/* The state chip, from a Node: the glyph and the state word. Degraded is amber; a last-known report is grey. */}}
+{{define "chip"}}<span class="chip{{with .Tone}} is-{{.}}{{end}}" data-key="chip">{{template "glyph-key" (glyph .Glyph 16)}}{{.State}}</span>{{end}}
+
+{{/* The state as a word, for dense rows: the same, without the chip's ground. */}}
+{{define "word"}}<span class="word{{with .Tone}} is-{{.}}{{end}}">{{template "glyph-key" (glyph .Glyph 16)}}{{.State}}</span>{{end}}

@@ -1,0 +1,6 @@
+# The slice every slot's units run in, which the node package installs as
+# /usr/lib/systemd/system/silkpool.slice (ADR 0014). Slots give way to the
+# machine's other work under contention. The agent sets the node's budget
+# on it at runtime.
+[Slice]
+CPUWeight=50

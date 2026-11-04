@@ -1,0 +1,4 @@
+# The Hub's system user, which the Hub package installs as
+# /usr/lib/sysusers.d/silkpool-hub.conf and makes in preinstall with
+# systemd-sysusers (ADR 0013).
+u silkpool-hub - "Silkpool Hub" /var/lib/silkpool-hub

@@ -1,0 +1,21 @@
+#!/bin/sh
+# The silkpool-hub package's preremove script (ADR 0013). dpkg runs it
+# with "remove" or "upgrade", and rpm with the number of copies there will
+# be, 0 on removal. On removal it stops and disables the Hub, and the path
+# unit that silkpool-hub init writes for certificate files. An upgrade
+# leaves the Hub running for the new postinstall to restart.
+set -e
+
+case "$1" in
+remove | 0) ;;
+*) exit 0 ;;
+esac
+
+units=silkpool-hub.service
+if [ -e /etc/systemd/system/silkpool-hub-certs.path ]; then
+	units="silkpool-hub-certs.path $units"
+fi
+systemctl disable $units
+if [ -d /run/systemd/system ]; then
+	systemctl stop $units
+fi

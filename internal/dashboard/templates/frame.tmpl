@@ -1,0 +1,38 @@
+{{/* The frame of every page: the head, which loads the live-update script, the top bar once setup is done and the operator signed in, and the page's main part. A page with live parts marks its body data-stream, so the script opens its stream. */}}
+{{define "frame"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}} · Silkpool</title>
+<link rel="stylesheet" href="/assets/silkpool.css">
+<script src="/assets/live.js" defer></script>
+</head>
+<body{{if .Live}} data-stream{{end}}>
+<div class="frame">
+{{- if .Tab}}
+{{template "nav" .}}
+{{- end}}
+<main id="main">
+{{template "main" .}}
+</main>
+</div>
+</body>
+</html>
+{{end}}
+
+{{/* The top bar: Nodes, Targets, Activity and Settings, then who's signed in, with Sign out. */}}
+{{define "nav"}}<nav class="nav">
+<a class="word" href="/">{{template "glyph" (glyph "busy" 16)}}Silkpool</a>
+{{- range $tab := tabs}}
+<a class="tab" href="{{.Path}}"{{if eq .Name $.Tab}} aria-current="page"{{end}}>{{.Title}}</a>
+{{- end}}
+<form class="who" method="post" action="/sign-out"><span>{{.Login}}</span><button class="lnk">Sign out</button></form>
+</nav>{{end}}
+
+{{/* The logo, for pages without a top bar. */}}
+{{define "logo"}}<div class="word logo">{{template "glyph" (glyph "busy" 16)}}Silkpool</div>{{end}}
+
+{{/* A line to copy, such as a runs-on line or a command: the text, and Copy, which the live-update script copies it with. */}}
+{{define "copy"}}<div class="copy"><span>{{.}}</span><button class="btn is-sm" type="button" data-copy="{{.}}">Copy</button></div>{{end}}

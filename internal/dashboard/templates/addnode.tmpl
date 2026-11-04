@@ -1,0 +1,40 @@
+{{/* Add node: make a code, then run one command on the machine. The live part waits for a machine to use the code; a refusal shows below it. */}}
+{{define "main"}}<div class="page">
+<div class="crumb"><a class="lnk" href="/">Nodes</a> / Add node</div>
+<h1 class="h1 hd">Add node</h1>
+{{template "add-node" .}}
+{{- with .Refusal}}
+<p class="amber narrow" role="alert">{{.}}</p>
+{{- end}}
+</div>{{end}}
+
+{{/* The code this browser made, with its commands per OS and whether a machine has used it, or Make a code; then the other codes, with Revoke for the open ones. */}}
+{{define "add-node"}}<div class="narrow" id="add-node">
+{{- with .Made}}
+{{- if eq .State "open"}}
+<p class="meta">Enrollment code · single use · expires {{.Expires}}</p>
+{{template "copy" .Text}}
+<div class="row os"><b class="h2">On the machine</b><span class="tabs">{{range $.Tabs}}<a href="/nodes/add?os={{.Key}}"{{if .On}} aria-current="page"{{end}}>{{.Title}}</a>{{end}}</span></div>
+<div class="cmd"><p>{{$.Install.Where}}, install Silkpool and enroll with this code:</p>{{template "copy" $.Install.Command}}</div>
+<div class="cmd"><p>Silkpool installed already? {{$.Enroll.Where}}:</p>{{template "copy" $.Enroll.Command}}</div>
+<p class="meta">It joins under its hostname. Add <code>--name</code> to choose another. It joins paused, so nothing runs until you resume it.</p>
+<p class="pending wait">{{template "glyph-key" (glyph "starting" 14)}}<span class="dim">Waiting for a machine to use this code…</span></p>
+{{- else if eq .State "used"}}
+<p class="wait">✓ <span><b>{{.Node}}</b> joined with this code. <a class="lnk is-ink" href="{{.NodePath}}">Open {{.Node}}</a></span></p>
+<form class="btns go" method="post" action="/nodes/add"><button class="btn is-primary">Make another</button></form>
+{{- else}}
+<form class="wait" method="post" action="/nodes/add"><span class="dim">This code is {{.State}}.</span> <button class="lnk is-ink">Make another</button></form>
+{{- end}}
+{{- else}}
+<p class="sub">Make a single-use enrollment code, then run one command on the machine as an administrator. The machine joins paused, so nothing runs until you resume it.</p>
+<form class="btns go" method="post" action="/nodes/add"><button class="btn is-primary">Make a code</button></form>
+{{- end}}
+{{- with .Others}}
+<h2 class="h2 sec">Other codes</h2>
+<ul class="codes">
+{{- range .}}
+<li data-key="{{.ID}}"><code>{{.ID}}</code><span{{if not .Open}} class="dim"{{end}}>{{.Line}} <span class="meta">· {{.Made}}</span></span>{{if .Open}}<form method="post" action="/nodes/add/revoke"><input type="hidden" name="code" value="{{.ID}}"><button class="lnk is-ink">Revoke</button></form>{{end}}</li>
+{{- end}}
+</ul>
+{{- end}}
+</div>{{end}}
