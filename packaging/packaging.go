@@ -30,8 +30,6 @@ func InstallScript(version string) ([]byte, error) {
 	}
 	stamp := strings.NewReplacer(
 		"@VERSION@", version,
-		"@DEB_VERSION@", linux.DebVersion(version),
-		"@RPM_VERSION@", linux.RPMVersion(version),
 		"@PKG@", macos.FileName(version),
 	)
 	return []byte(stamp.Replace(installScript)), nil

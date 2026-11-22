@@ -61,15 +61,29 @@ func RPMVersion(version string) string { return DebVersion(version) + "-1" }
 // packagers are nfpm's, by format.
 var packagers = map[string]nfpm.Packager{"deb": deb.Default, "rpm": rpm.DefaultRPM}
 
-// FileName is the package file's name by its format's convention, such
-// as silkpool_1.2.3_amd64.deb or silkpool-1.2.3-1.x86_64.rpm. It panics
-// for a format that isn't one of Formats.
+// rpmArches are the .rpm's names for Arches; any other architecture
+// keeps its GOARCH name.
+var rpmArches = map[string]string{"amd64": "x86_64", "arm64": "aarch64"}
+
+// FileName is the package file's name, by its format's convention but
+// for the version, such as silkpool_1.2.3_amd64.deb or
+// silkpool-1.2.3-1.x86_64.rpm. The version is spelled as the release's
+// is, 1.2.3-rc.1, and not as the package carries it, 1.2.3~rc.1:
+// GitHub renames a release's file whose name has a "~", so install.sh
+// and the release's SHA256SUMS would name a file it doesn't hold. It
+// panics for a format that isn't one of Formats.
 func (p Package) FileName() string {
-	packager, ok := packagers[p.Format]
-	if !ok {
-		panic(fmt.Sprintf("linux: %q isn't a package format", p.Format))
+	switch p.Format {
+	case "deb":
+		return p.Name + "_" + p.Version + "_" + p.Arch + ".deb"
+	case "rpm":
+		arch := p.Arch
+		if a, ok := rpmArches[p.Arch]; ok {
+			arch = a
+		}
+		return p.Name + "-" + p.Version + "-1." + arch + ".rpm"
 	}
-	return packager.ConventionalFileName(nfpm.WithDefaults(&nfpm.Info{Name: p.Name, Arch: p.Arch, Version: p.Version}))
+	panic(fmt.Sprintf("linux: %q isn't a package format", p.Format))
 }
 
 // Write writes the package to w. It holds the binary at the path binary,

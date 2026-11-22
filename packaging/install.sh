@@ -20,8 +20,6 @@ set -eu
 
 # The release's build fills these in.
 version='@VERSION@'
-deb_version='@DEB_VERSION@'
-rpm_version='@RPM_VERSION@'
 pkg='@PKG@'
 
 release="https://github.com/meschoening/silkpool/releases/download/v$version"
@@ -77,14 +75,15 @@ package_arch() {
 }
 
 # file_name prints the file name of a package in a format for an
-# architecture.
+# architecture, with the release's version as it is, since GitHub
+# renames a file whose name has the "~" the packages' versions carry.
 file_name() {
 	case "$2" in
-	deb) echo "${1}_${deb_version}_$3.deb" ;;
+	deb) echo "${1}_${version}_$3.deb" ;;
 	rpm)
 		case "$3" in
-		amd64) echo "$1-$rpm_version.x86_64.rpm" ;;
-		arm64) echo "$1-$rpm_version.aarch64.rpm" ;;
+		amd64) echo "$1-$version-1.x86_64.rpm" ;;
+		arm64) echo "$1-$version-1.aarch64.rpm" ;;
 		esac
 		;;
 	esac

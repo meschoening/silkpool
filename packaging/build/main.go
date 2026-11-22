@@ -9,9 +9,9 @@
 //
 //	go run ./packaging/build -version 1.2.3 -out dist
 //
-// It names each package as its format does, such as
+// It names each file with the release's version as it's given, such as
 // silkpool_1.2.3_amd64.deb, silkpool-hub-1.2.3-1.aarch64.rpm or
-// silkpool_1.2.3_windows_amd64.zip, and prints each file it writes. It
+// silkpool_1.2.3-rc.1_windows_amd64.zip, and prints each file it writes. It
 // writes no SHA256SUMS: the release's covers every OS's files, the
 // .pkg that the workflow's macOS job builds on a Mac among them, so the
 // workflow writes it last.
