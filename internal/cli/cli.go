@@ -9,10 +9,15 @@
 // --json, the automation contract. The exit codes are 0 for applied or
 // nothing to change, 1 for refused, 2 for a usage error, 3 when it
 // couldn't ask the agent, and 4 for Not confirmed.
+//
+// The tray app reads and commands the agent through the same client, as
+// a Link, so its revisions, resends and check of the server are the
+// CLI's.
 package cli
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -22,13 +27,15 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/meschoening/silkpool/internal/availability"
 	"github.com/meschoening/silkpool/internal/control"
 	"github.com/meschoening/silkpool/internal/node"
 	"github.com/meschoening/silkpool/internal/store"
+	"github.com/meschoening/silkpool/internal/winexecpolicy"
+	"github.com/meschoening/silkpool/internal/winsac"
 	"github.com/meschoening/silkpool/internal/wording"
+	"github.com/meschoening/silkpool/internal/zone"
 )
 
 // The exit codes.
@@ -53,13 +60,29 @@ type Env struct {
 	// run as: control.Path and 0, outside tests.
 	Socket    string
 	ServerUID int
+	// Dial connects to the agent at Socket, accepting only a server
+	// running as ServerUID, or is nil for control.Dial. Only tests set it.
+	Dial func(ctx context.Context, socket string, serverUID int) (*control.Client, error)
 	// Version is this CLI's version.
 	Version string
 	// StartCommand is the command that starts the service, which the CLI
 	// names when it isn't running.
 	StartCommand string
+	// Elevate says how to run a command that needs elevation, as in
+	// "enroll changes this machine's accounts, so run it <Elevate>.", or
+	// is empty for "with sudo".
+	Elevate string
 	// NewID returns a new command ID, or is nil for a random one.
 	NewID func() string
+	// SmartAppControl reads Windows' Smart App Control, which enroll
+	// names while it's On or in Evaluation (winsac.Read), or is nil where
+	// there's none.
+	SmartAppControl func() (winsac.State, error)
+	// ExecutionPolicy reads the execution policy each PowerShell's
+	// scripts meet, which enroll names while it blocks a job's
+	// PowerShell steps (winexecpolicy.Read), or is nil where there's no
+	// PowerShell.
+	ExecutionPolicy func() []winexecpolicy.Reading
 }
 
 // usage is the help, which leaves out the commands only the OS runs.
@@ -138,12 +161,15 @@ func randomID() string {
 }
 
 // A session is one run of the CLI: its flags, and its connection to the
-// agent.
+// agent. A Link's commands run as sessions too, from the tray.
 type session struct {
 	env    Env
 	color  bool
 	json   bool
 	client *control.Client
+	// tray reports that the session is the tray app's, whose commands
+	// come from the tray.
+	tray bool
 }
 
 func (s *session) close() {
@@ -214,7 +240,7 @@ func (s *session) cantAsk(code, sentence string) int {
 // the CLI unless anyVersion, and returns 0, or the exit code once it has
 // said why it couldn't.
 func (s *session) connect(ctx context.Context, anyVersion bool) int {
-	c, err := control.Dial(ctx, s.env.Socket, s.env.ServerUID)
+	c, err := s.dial(ctx)
 	if err != nil {
 		return s.dialFailed(err)
 	}
@@ -223,6 +249,20 @@ func (s *session) connect(ctx context.Context, anyVersion bool) int {
 		return s.cantAsk("version", fmt.Sprintf("This CLI is %s but the running service is %s. Restart the service.", s.env.Version, c.Hello.Version))
 	}
 	return ExitOK
+}
+
+// dial connects to the agent through Env's Dial, or control.Dial.
+func (s *session) dial(ctx context.Context) (*control.Client, error) {
+	dial := control.Dial
+	if s.env.Dial != nil {
+		dial = s.env.Dial
+	}
+	c, err := dial(ctx, s.env.Socket, s.env.ServerUID)
+	if err != nil {
+		return nil, err
+	}
+	c.Tray = s.tray
+	return c, nil
 }
 
 // dialFailed says why the CLI couldn't connect.
@@ -240,13 +280,13 @@ func (s *session) dialFailed(err error) int {
 	return s.cantAsk("unreachable", wording.Sentence(fmt.Sprintf("couldn't ask Silkpool's service: %v", err)))
 }
 
-// elevated returns 0 if the caller is root, or says what to do and
+// elevated returns 0 if the caller is elevated, or says what to do and
 // returns ExitCantAsk.
 func (s *session) elevated(why string) int {
 	if s.client.Hello.Elevated {
 		return ExitOK
 	}
-	return s.cantAsk(control.CodeNotElevated, why+", so run it with sudo.")
+	return s.cantAsk(control.CodeNotElevated, why+", so run it "+cmp.Or(s.env.Elevate, "with sudo")+".")
 }
 
 // a read is the status the CLI read, decoded, with its view.
@@ -284,15 +324,14 @@ func decode(st control.Status) (read, error) {
 	if err != nil {
 		return read{}, err
 	}
-	zone := n.Availability.AutoResume.Zone
-	if zone == nil {
-		zone, err = time.LoadLocation(st.Machine.Zone)
-		if err != nil {
-			zone = time.UTC
-		}
+	// Before its schedule has a zone, the node shows times in its OS's,
+	// or in Central if the agent found none.
+	z := n.Availability.AutoResume.Zone
+	if z == nil {
+		z = zone.Own(st.Machine.Zone)
 	}
 	view := wording.View{Node: n, Name: shortName(st.Machine.Hostname), HubSince: since,
-		Clock: wording.Clock{Now: now, Zone: zone, Own: st.Machine.Zone}}
+		Clock: wording.Clock{Now: now, Zone: z, Own: st.Machine.Zone}}
 	return read{status: st, node: n, view: view}, nil
 }
 
@@ -340,14 +379,14 @@ func (s *session) failed(err error) int {
 	return s.cantAsk("unreachable", wording.Sentence(fmt.Sprintf("couldn't ask Silkpool's service: %v", err)))
 }
 
-// errNotConfirmed is what once returns when the connection dropped
-// before the answer, twice.
-var errNotConfirmed = errors.New("not confirmed")
+// ErrNotConfirmed is what a command returns when the connection to the
+// agent dropped before its answer, twice: it may have applied.
+var ErrNotConfirmed = errors.New("not confirmed: the connection to Silkpool's service dropped before it answered, twice")
 
 // once runs do, and if the connection drops before its answer,
 // reconnects and runs it once more, which the agent answers with the
 // first answer if the first one applied. Once the first has dropped, it
-// returns errNotConfirmed unless the agent answers the second: the first
+// returns ErrNotConfirmed unless the agent answers the second: the first
 // may have applied.
 func (s *session) once(ctx context.Context, do func(*control.Client) error) error {
 	err := do(s.client)
@@ -356,13 +395,13 @@ func (s *session) once(ctx context.Context, do func(*control.Client) error) erro
 	}
 	s.client.Close()
 	s.client = nil
-	c, err := control.Dial(ctx, s.env.Socket, s.env.ServerUID)
+	c, err := s.dial(ctx)
 	if err != nil {
-		return errNotConfirmed
+		return ErrNotConfirmed
 	}
 	s.client = c
 	if err = do(c); err != nil && !errors.As(err, new(*control.Error)) {
-		return errNotConfirmed
+		return ErrNotConfirmed
 	}
 	return err
 }
@@ -377,7 +416,7 @@ func (s *session) send(ctx context.Context, do func(*control.Client) (control.Re
 		return err
 	})
 	switch {
-	case errors.Is(err, errNotConfirmed):
+	case errors.Is(err, ErrNotConfirmed):
 		return r, s.notConfirmed()
 	case err != nil:
 		return r, s.failed(err)

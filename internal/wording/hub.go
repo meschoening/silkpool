@@ -2,6 +2,7 @@ package wording
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -43,14 +44,24 @@ type EnrollCommand struct {
 	OSes, Where, Command string
 }
 
-// EnrollCommands are the commands that enroll a machine with code, as
-// Add node shows them: with sudo on Linux and macOS, and in an
-// administrator PowerShell on Windows.
-func EnrollCommands(code string) []EnrollCommand {
-	return []EnrollCommand{
-		{OSes: "Linux and macOS", Where: "in a shell", Command: "sudo silkpool enroll " + code},
-		{OSes: "Windows", Where: "in PowerShell, run as administrator", Command: "silkpool enroll " + code},
+// EnrollCommands are the commands that enroll a machine with code, on
+// the OSes s has installers for, as Add node shows them: with sudo on
+// Linux and macOS, and in an administrator PowerShell on Windows.
+func (s Installers) EnrollCommands(code string) []EnrollCommand {
+	var cmds []EnrollCommand
+	var unix []string
+	for _, os := range []string{"linux", "macos"} {
+		if slices.Contains(s, os) {
+			unix = append(unix, osNames[os])
+		}
 	}
+	if len(unix) > 0 {
+		cmds = append(cmds, EnrollCommand{OSes: list(unix), Where: "in a shell", Command: "sudo silkpool enroll " + code})
+	}
+	if slices.Contains(s, "windows") {
+		cmds = append(cmds, EnrollCommand{OSes: "Windows", Where: "in PowerShell, run as administrator", Command: "silkpool enroll " + code})
+	}
+	return cmds
 }
 
 // EnrollNote follows the enroll commands.
@@ -66,7 +77,7 @@ func HubRemoveConfirm(name string, connected bool, jobs []string) string {
 		if len(jobs) > 0 {
 			first = fmt.Sprintf("%s finishes %s first; removing never cancels a job.", name, list(jobs))
 		}
-		return first + " Then its slot accounts are deleted and it leaves the Hub for good. Enrolling it again needs a new code."
+		return first + " Then its slots are reset and it leaves the Hub for good. Enrolling it again needs a new code."
 	}
 	s := fmt.Sprintf("%s isn't connected, so it's removed from the Hub now and its key is revoked.", name)
 	if len(jobs) > 0 {

@@ -7,28 +7,32 @@ import (
 	"io/fs"
 	"log/slog"
 	"maps"
-	"os/user"
 	"slices"
-	"strconv"
 	"sync"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/meschoening/silkpool/internal/agent"
 	"github.com/meschoening/silkpool/internal/availability"
 	"github.com/meschoening/silkpool/internal/node"
 	"github.com/meschoening/silkpool/internal/secret"
 	"github.com/meschoening/silkpool/internal/slot"
+	"github.com/meschoening/silkpool/internal/winsac"
 )
 
-// Slots is what the OS needs of a Linux node's slots, as *slot.Slots
-// runs them.
+// Slots is what the OS needs of a node's slots, as *slot.Slots runs
+// them on Linux, macOS and Windows. LiveLog is the file runner's listener
+// in slot n writes as it runs: its ListenerLog on Linux and Windows, and
+// on a Mac its job's own output file, which Wait, or else the slot's
+// reset, copies into its ListenerLog once the job has ended. A Mac's
+// SetBudget refuses every budget, which the node never asks of it. Each
+// OS adds what linking a runner's root needs of it (slotsOS).
 type Slots interface {
+	slotsOS
 	Ready(ctx context.Context, n int) node.Event
-	Account(n int) string
+	CheckAccount(ctx context.Context) error
 	RunnerRoot(n int) string
 	ListenerLog(runner string) string
+	LiveLog(n int, runner string) string
 	Start(ctx context.Context, n int, runner string, config secret.Value) error
 	Stop(ctx context.Context, n int, runner string) error
 	Kill(ctx context.Context, n int, runner string) error
@@ -37,28 +41,32 @@ type Slots interface {
 	Alive(ctx context.Context) ([]string, error)
 	Recorded() (map[int]string, error)
 	Reset(ctx context.Context, n int) []node.Event
-	DeleteAccount(n int) node.Event
+	DeleteSlot(ctx context.Context, n int) node.Event
 	SetBudget(ctx context.Context, b availability.Budget) error
 }
 
 // Installs is what the OS needs of the runner application's installs,
 // as runnerinstall.Installs keeps them. Install's InstallFailed comes
 // with its reason scrubbed, which the OS copies into the failure of each
-// slot waiting on the install.
+// slot waiting on the install. Each OS adds its Link (installsOS).
 type Installs interface {
+	installsOS
 	Install(ctx context.Context, app node.InstallRunnerApp) node.Event
 	Found() ([]string, error)
 	Delete(version string) error
-	Link(version, root string, uid, gid int) error
 }
 
 // Config is what the OS needs.
 type Config struct {
 	Slots    Slots
 	Installs Installs
-	// Lookup returns the UID and primary group of the account name, or is
-	// nil for the OS's account database.
-	Lookup func(name string) (uid, gid int, err error)
+	// Survey, if set, works out the machine's shared places again, as the
+	// Mac's exposure check needs (slot.Slots.Resurvey). The OS runs it in
+	// the background as it starts and every SurveyEvery after, or
+	// DefaultSurveyEvery if that's zero, and logs a failure. Linux's check
+	// works them out as it runs, so it leaves Survey nil.
+	Survey      func(ctx context.Context) error
+	SurveyEvery time.Duration
 	// Log is where the OS logs what fails without an event, or nil for
 	// slog.Default.
 	Log *slog.Logger
@@ -68,19 +76,29 @@ type Config struct {
 	// WorkerPoll is how often the OS looks for a job's worker, from the
 	// job's start until it's up, or zero for DefaultWorkerPoll.
 	WorkerPoll time.Duration
+	// SmartAppControl, on Windows only, reads Smart App Control's state
+	// before each slot is prepared (winsac.Read), or is nil to leave it
+	// unread. Elsewhere it's nil.
+	SmartAppControl func() (winsac.State, error)
+	// FullDiskAccess, on macOS only, reports whether the agent has Full
+	// Disk Access before each slot is prepared (macfda.Read), or is nil
+	// to leave it unasked. Elsewhere it's nil.
+	FullDiskAccess func() (bool, error)
 }
 
 // DefaultPoll is how often a listener's log is read for new lines,
-// DefaultWorkerPoll how often the OS looks for a job's worker, and
-// waitRetry how long the OS waits to ask systemd again how a runner
-// ended when it couldn't say.
+// DefaultWorkerPoll how often the OS looks for a job's worker,
+// DefaultSurveyEvery how often it runs Survey, daily (#19), and waitRetry
+// how long the OS waits to ask systemd, launchd or the service manager
+// again how a runner ended when it couldn't say.
 const (
-	DefaultPoll       = 250 * time.Millisecond
-	DefaultWorkerPoll = 100 * time.Millisecond
-	waitRetry         = 5 * time.Second
+	DefaultPoll        = 250 * time.Millisecond
+	DefaultWorkerPoll  = 100 * time.Millisecond
+	DefaultSurveyEvery = 24 * time.Hour
+	waitRetry          = 5 * time.Second
 )
 
-// An OS carries out a Linux node's effects. It's an agent.OS.
+// An OS carries out a node's effects on its machine. It's an agent.OS.
 type OS struct {
 	c   Config
 	ctx context.Context
@@ -116,8 +134,8 @@ var _ agent.OS = (*OS)(nil)
 // New returns an OS that carries out effects until ctx ends. The
 // runners it starts outlive it.
 func New(ctx context.Context, c Config) *OS {
-	if c.Lookup == nil {
-		c.Lookup = lookup
+	if c.SurveyEvery == 0 {
+		c.SurveyEvery = DefaultSurveyEvery
 	}
 	if c.Poll == 0 {
 		c.Poll = DefaultPoll
@@ -144,8 +162,17 @@ func (o *OS) Wait() { o.tasks.Wait() }
 // Find returns what the machine holds as the agent starts: the installs,
 // what the logs of the runners that died while the agent was down say,
 // and the runners still alive, which it follows again from the start of
-// their logs, reporting through report.
+// their logs, reporting through report. It checks the machine's service
+// account for drift first, restoring what Silkpool owns: a failure is
+// logged here, and closes each slot as it's next prepared. Then it starts
+// surveying the shared places in the background, if the OS has Survey.
 func (o *OS) Find(ctx context.Context, report func(node.Event)) (agent.Found, error) {
+	if err := o.c.Slots.CheckAccount(ctx); err != nil {
+		o.log.Warn("the service account failed its check as the agent started", "err", scrubbed(err))
+	}
+	if o.c.Survey != nil {
+		o.tasks.Go(o.survey)
+	}
 	installs, err := o.c.Installs.Found()
 	if err != nil {
 		return agent.Found{}, fmt.Errorf("can't read the runner application's installs: %w", err)
@@ -170,8 +197,13 @@ func (o *OS) Find(ctx context.Context, report func(node.Event)) (agent.Found, er
 			o.follow(n, runner, report)
 			continue
 		}
-		path := o.c.Slots.ListenerLog(runner)
-		l, err := readLog(path)
+		// A Mac's runner that ended while the agent was down may not have
+		// had its output copied into its log yet: its live log comes first.
+		path, logs := o.c.Slots.ListenerLog(runner), []string{}
+		if live := o.c.Slots.LiveLog(n, runner); live != path {
+			logs = append(logs, live)
+		}
+		l, err := readLogs(append(logs, path)...)
 		if err != nil {
 			o.log.Warn("couldn't read a dead runner's listener log", "runner", runner, "err", scrubbed(err))
 			continue
@@ -207,8 +239,8 @@ func (o *OS) Carry(effect any, report func(node.Event)) {
 				report(ev)
 			}
 		})
-	case node.DeleteAccount:
-		o.slot(e.Slot, func() { report(o.c.Slots.DeleteAccount(e.Slot)) })
+	case node.DeleteSlot:
+		o.slot(e.Slot, func() { report(o.c.Slots.DeleteSlot(o.ctx, e.Slot)) })
 	case node.InstallRunnerApp:
 		o.install(e, report)
 	case node.ApplyBudget:
@@ -268,10 +300,20 @@ func (o *OS) slot(n int, job func()) {
 	o.enqueue(q, job)
 }
 
-// prepare carries out PrepareSlot: the slot's account and exposure
-// check, then an install of the runner application to start from.
+// prepare carries out PrepareSlot: what the machine's settings block
+// first, Smart App Control on Windows and Full Disk Access on a Mac
+// (blocked); then the service account's check, its clean if it's due
+// and the exposure check, then an install of the runner application to
+// start from. A preparation the OS's stop cut short reports nothing.
 func (o *OS) prepare(n int, report func(node.Event)) {
+	if r := o.blocked(); r != 0 {
+		report(node.PrepareFailed{Slot: n, Reason: r})
+		return
+	}
 	e := o.c.Slots.Ready(o.ctx, n)
+	if o.ctx.Err() != nil {
+		return
+	}
 	if _, ok := e.(node.Prepared); !ok {
 		report(e)
 		return
@@ -367,7 +409,8 @@ func (o *OS) delete(version string) {
 }
 
 // start carries out StartListener: it links the runner's root to its
-// install, starts its listener with its JIT config, and follows it.
+// install (link), starts its listener with its JIT config, and follows
+// it.
 func (o *OS) start(e agent.Listen, report func(node.Event)) {
 	failed := func(reason node.Reason, err error) {
 		report(node.StartFailed{Runner: e.Runner, Reason: reason, Detail: sentence(err)})
@@ -376,16 +419,7 @@ func (o *OS) start(e agent.Listen, report func(node.Event)) {
 		failed(node.RunnerAppUnavailable, errors.New("no runner application is installed yet"))
 		return
 	}
-	uid, gid, err := o.c.Lookup(o.c.Slots.Account(e.Slot))
-	if err != nil {
-		failed(node.SlotCantStart, fmt.Errorf("can't find slot %d's account: %w", e.Slot, err))
-		return
-	}
-	if err := o.c.Installs.Link(e.Version, o.c.Slots.RunnerRoot(e.Slot), uid, gid); err != nil {
-		reason := node.SlotCantStart
-		if errors.Is(err, fs.ErrNotExist) {
-			reason = node.RunnerAppUnavailable
-		}
+	if reason, err := o.link(e); err != nil {
 		failed(reason, err)
 		return
 	}
@@ -405,7 +439,7 @@ func (o *OS) start(e agent.Listen, report func(node.Event)) {
 // runner runs on, and nothing more is reported.
 func (o *OS) follow(n int, runner string, report func(node.Event)) {
 	o.tasks.Go(func() {
-		path := o.c.Slots.ListenerLog(runner)
+		path, live := o.c.Slots.ListenerLog(runner), o.c.Slots.LiveLog(n, runner)
 		var (
 			exit slot.Exit
 			err  error
@@ -418,7 +452,8 @@ func (o *OS) follow(n int, runner string, report func(node.Event)) {
 				if err == nil || errors.Is(err, slot.ErrGone) || o.ctx.Err() != nil {
 					return
 				}
-				// Systemd couldn't say, as when the bus hiccups: ask again.
+				// Systemd or launchd couldn't say, as when the bus hiccups: ask
+				// again.
 				o.log.Warn("couldn't wait for a runner's listener", "slot", n, "runner", runner, "err", scrubbed(err))
 				select {
 				case <-time.After(waitRetry):
@@ -427,7 +462,7 @@ func (o *OS) follow(n int, runner string, report func(node.Event)) {
 				}
 			}
 		})
-		t := tail{path: path}
+		t := tail{path: live}
 		var watching chan struct{}
 		line := func(e node.Event) {
 			report(e)
@@ -465,6 +500,13 @@ func (o *OS) follow(n int, runner string, report func(node.Event)) {
 			return
 		}
 		read()
+		if live != path {
+			// The listener's output has been copied into its log by now:
+			// read the copy for what the last reads missed, which the log's
+			// state says each event of once.
+			t.path, t.at, t.partial = path, 0, nil
+			read()
+		}
 		if errors.Is(err, slot.ErrGone) {
 			exit.Code = 1
 			if t.log.completed {
@@ -517,31 +559,61 @@ func (o *OS) keep(runner, path string) {
 	}
 }
 
-// lookup returns the UID and primary group of the account name, from the
-// OS's account database.
-func lookup(name string) (uid, gid int, err error) {
-	u, err := user.Lookup(name)
-	if err != nil {
-		return 0, 0, err
+// survey runs Survey now and every SurveyEvery after, until the OS
+// stops. A survey that fails is logged: the slots fail closed until one
+// succeeds, and each slot readied meanwhile surveys again.
+func (o *OS) survey() {
+	tick := time.NewTicker(o.c.SurveyEvery)
+	defer tick.Stop()
+	for {
+		if err := o.c.Survey(o.ctx); err != nil && o.ctx.Err() == nil {
+			o.log.Warn("couldn't work out the shared places", "err", scrubbed(err))
+		}
+		select {
+		case <-tick.C:
+		case <-o.ctx.Done():
+			return
+		}
 	}
-	if uid, err = strconv.Atoi(u.Uid); err != nil {
-		return 0, 0, err
-	}
-	gid, err = strconv.Atoi(u.Gid)
-	return uid, gid, err
 }
 
-// sentence is err as a failure's detail: a sentence, scrubbed.
-func sentence(err error) string {
-	d := scrubbed(err)
-	r, size := utf8.DecodeRuneInString(d)
-	return string(unicode.ToUpper(r)) + d[size:]
+// blocked returns the Degraded reason a slot prepared now fails with
+// for a setting of the machine's, or 0 if none blocks it:
+//
+//   - SmartAppControlOn while Smart App Control is On, on Windows: it
+//     blocks GitHub's runner application, so the slot fails with it
+//     rather than as a runner that never came online (ADR 0013). In
+//     Evaluation it blocks nothing.
+//   - NoFullDiskAccess while the agent hasn't Full Disk Access, on a Mac:
+//     without it, macOS refuses the clean what a job's trustd leaves in
+//     the service account's /var/folders folders, so the clean fails
+//     closed after such a job, and the slots stop (#306).
+//
+// A state it can't read is logged and blocks nothing: the checks are
+// there to name the cause of a slot that can't start, and a read that
+// fails says nothing of it. Without Full Disk Access, the clean still
+// fails closed on what macOS refuses it.
+func (o *OS) blocked() node.Reason {
+	if o.c.SmartAppControl != nil {
+		state, err := o.c.SmartAppControl()
+		switch {
+		case err != nil:
+			o.log.Warn("couldn't read Smart App Control's state, so a slot is prepared as if it's off", "err", scrubbed(err))
+		case state.Blocks():
+			return node.SmartAppControlOn
+		}
+	}
+	if o.c.FullDiskAccess != nil {
+		granted, err := o.c.FullDiskAccess()
+		switch {
+		case err != nil:
+			o.log.Warn("couldn't tell whether Silkpool has Full Disk Access, so a slot is prepared as if it has", "err", scrubbed(err))
+		case !granted:
+			return node.NoFullDiskAccess
+		}
+	}
+	return 0
 }
-
-// scrubbed is err's text with every secret in it scrubbed, for a
-// failure's detail or the OS's log: what the machine and GitHub say in
-// it isn't Silkpool's.
-func scrubbed(err error) string { return secret.Scrub(err.Error()) }
 
 // A queue runs jobs one at a time, in order, on a goroutine that lasts
 // while there are jobs.

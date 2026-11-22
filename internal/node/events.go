@@ -27,7 +27,7 @@ type Command struct {
 
 // Remove starts the node's removal, which can't be undone: the node is
 // Paused indefinitely, every command but Emergency stop is refused, and
-// once every slot is reset and its account deleted, the node wipes its
+// once every slot is reset and deleted, the node wipes its
 // Hub state. It's answered with a Reply, like a Command.
 type Remove struct {
 	ID     string
@@ -72,8 +72,8 @@ type Enroll struct {
 // EnrollAccepted tells a machine that isn't enrolled that the Hub
 // accepted its Enroll. It becomes a node as New makes it, in Zone, the
 // zone EnrollAtHub carried, with Target, the Hub's default target.
-// Enrolling also checks its slot, which creates the slot's account and
-// runs the exposure check: a hit doesn't undo the enrollment, but shows
+// Enrolling also checks its slot, which checks the machine's service
+// account and runs the exposure check: a hit doesn't undo the enrollment, but shows
 // on the slot.
 type EnrollAccepted struct {
 	ID     string
@@ -162,7 +162,8 @@ type Acknowledged struct{ Through int64 }
 type Prepared struct{ Slot int }
 
 // PrepareFailed reports that a slot failed its checks: Reason is
-// SlotExposed, RunnerAppUnavailable or SlotCantStart.
+// SlotExposed, RunnerAppUnavailable, SlotCantStart, or, on Windows,
+// SmartAppControlOn, or, on a Mac, NoFullDiskAccess.
 type PrepareFailed struct {
 	Slot   int
 	Reason Reason
@@ -224,8 +225,8 @@ type JobCompleted struct {
 // ExitVersionRefused with no job means GitHub refused the runner's
 // version: the slot fails with RunnerAppUnavailable, and the node tells
 // the Hub through its outbox. OutOfMemory reports that the OS ended a
-// process of the runner's because memory ran out, which the job it held
-// records.
+// process of the runner's because memory ran out, or, on Windows, failed
+// one's commit past the memory budget, which the job it held records.
 type ListenerExited struct {
 	Runner      string
 	Code        int
@@ -264,10 +265,11 @@ type ResetFailed struct {
 	Detail string
 }
 
-// AccountDeleted reports that a slot's account has been deleted.
-type AccountDeleted struct{ Slot int }
+// SlotDeleted reports that what a slot keeps on the machine has been
+// deleted.
+type SlotDeleted struct{ Slot int }
 
-// DeleteFailed reports that a slot's account couldn't be deleted.
+// DeleteFailed reports that what a slot keeps couldn't be deleted.
 type DeleteFailed struct {
 	Slot   int
 	Detail string
@@ -308,7 +310,7 @@ func (Retired) event()         {}
 func (LogsCopied) event()      {}
 func (SlotReset) event()       {}
 func (ResetFailed) event()     {}
-func (AccountDeleted) event()  {}
+func (SlotDeleted) event()     {}
 func (DeleteFailed) event()    {}
 func (StopLostRunners) event() {}
 
@@ -337,9 +339,9 @@ type Reply struct {
 type AutoResumed struct{ At time.Time }
 
 // PrepareSlot asks the agent to check a slot before it gets a runner,
-// including the exposure check run as its slot account, and to apply
-// Prepared or PrepareFailed. A newly enrolled node asks for one too,
-// while paused, and the agent creates the slot's account first. A slot
+// including the service account's drift check and the exposure check
+// run as it, and to apply Prepared or PrepareFailed. A newly enrolled
+// node asks for one too, while paused. A slot
 // needs an install of the runner application: while the node has none,
 // its preparation waits for the first one, which the agent applies as
 // InstallReady before Prepared, and a failed download is PrepareFailed
@@ -419,12 +421,15 @@ type InstallRunnerApp struct{ Version, SHA256 string }
 // runner application, which no runner uses any more.
 type DeleteInstall struct{ Version string }
 
-// DeleteAccount asks the agent to delete a slot's account, and to apply
-// AccountDeleted or DeleteFailed.
-type DeleteAccount struct{ Slot int }
+// DeleteSlot asks the agent to delete what a slot keeps on the machine,
+// such as its folder, once it has been reset, because the node is being
+// removed, and to apply SlotDeleted or DeleteFailed. It never deletes
+// the machine's service account, which only uninstalling does (ADR
+// 0007).
+type DeleteSlot struct{ Slot int }
 
 // NotCleanedUp reports, during a forced removal, that a slot couldn't be
-// reset or its account deleted. The removal goes on regardless.
+// reset or deleted. The removal goes on regardless.
 type NotCleanedUp struct {
 	Slot   int
 	Detail string
@@ -458,7 +463,7 @@ func (RemoveAtHub) effect()      {}
 func (EnrollAtHub) effect()      {}
 func (InstallRunnerApp) effect() {}
 func (DeleteInstall) effect()    {}
-func (DeleteAccount) effect()    {}
+func (DeleteSlot) effect()       {}
 func (NotCleanedUp) effect()     {}
 func (Wipe) effect()             {}
 func (ConfirmRemoved) effect()   {}

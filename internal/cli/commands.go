@@ -323,6 +323,22 @@ func runEnroll(ctx context.Context, s *session, args []string) int {
 	}
 	if !s.json {
 		fmt.Fprintf(s.env.Stdout, "Enrolled %s in %s. It's paused until you resume it. Check auto-resume and the slot limit, then run `silkpool resume`.\n", *name, hubCode.URL)
+		// Smart App Control would block the runner application. A state
+		// that can't be read says nothing: the agent reads it again
+		// before each runner.
+		if read := s.env.SmartAppControl; read != nil {
+			if state, err := read(); err == nil && state.Warns() {
+				fmt.Fprintln(s.env.Stdout, wording.SmartAppControl)
+			}
+		}
+		// An execution policy that blocks a job's PowerShell steps. It
+		// blocks no other job, so the node isn't Degraded by it, and
+		// the diagnostics report shows it.
+		if read := s.env.ExecutionPolicy; read != nil {
+			if line := wording.ExecutionPolicy(read()); line != "" {
+				fmt.Fprintln(s.env.Stdout, line)
+			}
+		}
 	}
 	return ExitOK
 }
@@ -350,7 +366,7 @@ func runRemove(ctx context.Context, s *session, args []string) int {
 	if code := s.connect(ctx, false); code != ExitOK {
 		return code
 	}
-	if code := s.elevated("remove deletes this machine's slot accounts"); code != ExitOK {
+	if code := s.elevated("remove resets this machine's slots"); code != ExitOK {
 		return code
 	}
 	r, code := s.readStatus(ctx)
@@ -465,7 +481,7 @@ func runSetHubURL(ctx context.Context, s *session, args []string) int {
 		return code
 	}
 	err := s.once(ctx, func(c *control.Client) error { return c.SetHubURL(ctx, rest[0]) })
-	if errors.Is(err, errNotConfirmed) {
+	if errors.Is(err, ErrNotConfirmed) {
 		return s.notConfirmed()
 	}
 	if err != nil {
@@ -498,7 +514,7 @@ func runVersion(ctx context.Context, s *session, args []string) int {
 	if _, code, ok := s.parse(fs, args, 0); !ok {
 		return code
 	}
-	c, err := control.Dial(ctx, s.env.Socket, s.env.ServerUID)
+	c, err := s.dial(ctx)
 	if err != nil {
 		if !s.json {
 			fmt.Fprintf(s.env.Stdout, "CLI      %s\n", s.env.Version)

@@ -205,7 +205,8 @@ func (a *Agent) sources() diagnostics.Sources {
 }
 
 // diagnose makes the report of src with what it reads of the machine:
-// the free disk and the end of the agent's own log. It runs off the
+// the free disk, each PowerShell's execution policy on Windows, and the
+// end of the agent's own log. It runs off the
 // loop, since reading them can take a while.
 func (a *Agent) diagnose(src diagnostics.Sources) (diagnostics.Report, error) {
 	src.FreeDisk = -1
@@ -215,6 +216,9 @@ func (a *Agent) diagnose(src diagnostics.Sources) (diagnostics.Report, error) {
 		} else {
 			a.log.Warn("couldn't read the free disk space", "err", err)
 		}
+	}
+	if a.c.ExecutionPolicy != nil {
+		src.PowerShell = diagnostics.PowerShellOf(a.c.ExecutionPolicy())
 	}
 	if a.c.LogTail != nil {
 		if lines, err := a.c.LogTail(diagnostics.LogLines); err == nil {

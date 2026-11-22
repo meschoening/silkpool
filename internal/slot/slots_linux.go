@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,11 +19,12 @@ import (
 	"github.com/meschoening/silkpool/internal/secret"
 )
 
-// Slots runs a Linux node's slots: it prepares their slot accounts, and
-// starts, stops and watches their runners' units through systemd over
-// the system D-Bus (ADRs 0005 to 0007). Each runner runs in a transient
-// unit of its own, which systemd supervises, so it outlives the agent.
-// Its methods are safe for concurrent use, but not on the same slot.
+// Slots runs a Linux node's slots: it prepares the machine's service
+// account, which every slot runs as (#214), and starts, stops and
+// watches their runners' units through systemd over the system D-Bus
+// (ADRs 0005 to 0007). Each runner runs in a transient unit of its own,
+// which systemd supervises, so it outlives the agent. Its methods are
+// safe for concurrent use, but not on the same slot.
 type Slots struct {
 	Layout
 	bus     *dbus.Conn
@@ -40,6 +40,28 @@ type Slots struct {
 	// refs holds the units this connection holds a reference to, which
 	// keeps systemd from unloading them before their exit is read.
 	refs map[string]bool
+	// resets is closed when a slot's reset next finishes, or nil if
+	// nobody waits for one.
+	resets chan struct{}
+
+	// account is held while the service account, its home or its
+	// records change: as it's prepared, as a reset marks it for its
+	// clean, and throughout the clean. Whoever holds use too takes use
+	// first.
+	account sync.Mutex
+	// use is held for reading while a runner or an exposure check starts
+	// or runs as the service account, and for writing by the
+	// account-wide clean, which kills every process of the account.
+	use sync.RWMutex
+	// checks runs the machine's exposure check once for every Ready that
+	// asks while it runs.
+	checks flight
+
+	// clock is the time, or nil for time.Now, and cleaning stands in for
+	// the account-wide clean's steps, or is nil for them. Only tests set
+	// them.
+	clock    func() time.Time
+	cleaning func(context.Context) error
 
 	// weakened leaves the sandbox's file system settings off every unit,
 	// so that a test can show the exposure check finding what they hide.
@@ -52,10 +74,6 @@ const (
 	manager = systemd + ".Manager"
 	service = systemd + ".Service"
 )
-
-// ErrGone is Wait's error for a runner whose unit is gone: it ended, and
-// systemd unloaded it with its exit code, while nobody was waiting.
-var ErrGone = errors.New("the runner's unit is gone")
 
 // Open connects to systemd over the system D-Bus, to run the slots l
 // lays out.
@@ -121,11 +139,12 @@ func (s *Slots) dispatch() {
 // caller built, with its JIT config.
 //
 //  1. It records runner in the slot's folder, so that the slot's reset
-//     knows whose logs to copy, even after the agent restarts.
-//  2. It writes config to a file only the slot account can read, in the
-//     runner root, which must be the account's own, mode 0700.
+//     knows whose logs to copy, even after the agent restarts, and the
+//     account-wide clean knows the slot isn't idle.
+//  2. It writes config to a file only the service account can read, in
+//     the runner root, which must be the account's own, mode 0700.
 //  3. It starts the runner's transient unit, silkpool-slotN-<runner>.service,
-//     which runs the launcher as the slot account. The launcher moves the
+//     which runs the launcher as the service account. The launcher moves the
 //     config into the listener's environment, so it's never on a command
 //     line or in the unit's settings, which other accounts can read.
 //  4. The listener's output goes to its file in the agent's logs
@@ -141,10 +160,14 @@ func (s *Slots) Start(ctx context.Context, n int, runner string, config secret.V
 	if err := checkRunner(runner); err != nil {
 		return err
 	}
-	a, err := user.Lookup(s.Account(n))
+	a, err := user.Lookup(s.Account())
 	if err != nil {
-		return fmt.Errorf("can't find slot %d's account: %w", n, err)
+		return fmt.Errorf("can't find the service account: %w", err)
 	}
+	// The account-wide clean waits for this, and once the runner is
+	// recorded, waits for the slot's reset.
+	s.use.RLock()
+	defer s.use.RUnlock()
 	uid, _ := strconv.Atoi(a.Uid)
 	gid, _ := strconv.Atoi(a.Gid)
 	root := s.RunnerRoot(n)
@@ -165,6 +188,21 @@ func (s *Slots) Start(ctx context.Context, n int, runner string, config secret.V
 	return nil
 }
 
+// Owner returns the service account's UID and primary group, as the
+// OS's account database has them, which a runner root's links to its
+// install are given.
+func (s *Slots) Owner(context.Context) (uid, gid int, err error) {
+	a, err := user.Lookup(s.Account())
+	if err != nil {
+		return 0, 0, fmt.Errorf("can't find the service account: %w", err)
+	}
+	if uid, err = strconv.Atoi(a.Uid); err != nil {
+		return 0, 0, err
+	}
+	gid, err = strconv.Atoi(a.Gid)
+	return uid, gid, err
+}
+
 func (s *Slots) start(ctx context.Context, n int, runner string) error {
 	if err := os.MkdirAll(s.RunnerLogs(runner), 0o700); err != nil {
 		return err
@@ -179,7 +217,7 @@ func (s *Slots) start(ctx context.Context, n int, runner string) error {
 		return fmt.Errorf("can't work out what slot %d may see: %w", n, err)
 	}
 	props := slices.Concat(s.properties(n, runner, dbus.UnixFD(log.Fd())),
-		s.sandbox(n, s.hidden(n, v), s.Home(n), s.RunnerRoot(n)))
+		s.sandbox(s.hidden(n, v), s.Home(), s.RunnerRoot(n)))
 	return s.startUnit(ctx, s.unit(n, runner), props, "runner "+runner+"'s unit")
 }
 
@@ -248,7 +286,7 @@ func (s *Slots) properties(n int, runner string, log dbus.UnixFD) []property {
 		{"Type", dbus.MakeVariant("exec")},
 		{"WorkingDirectory", dbus.MakeVariant(root)},
 		{"ExecStart", dbus.MakeVariant([]execCommand{{s.Launcher, []string{s.Launcher, LaunchMode, root}, false}})},
-		{"Environment", dbus.MakeVariant([]string{"ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE=1"})},
+		{"Environment", dbus.MakeVariant([]string{"ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE=1", channelTimeoutVar + "=" + channelTimeout})},
 		{"StandardOutputFileDescriptor", dbus.MakeVariant(log)},
 		{"StandardErrorFileDescriptor", dbus.MakeVariant(log)},
 		{"OOMPolicy", dbus.MakeVariant("continue")},
@@ -260,19 +298,19 @@ func (s *Slots) properties(n int, runner string, log dbus.UnixFD) []property {
 	}
 }
 
-// sandbox is the sandbox every unit of slot n carries, its runners' and
-// its exposure check's, which hides hidden and lets it write writable
-// (ADRs 0007 and 0014): the slot account as User=, the slots' slice, a
-// read-only system, no homes, and the decided protections. A writable
-// path that starts with "-" may be missing.
-func (s *Slots) sandbox(n int, hidden []string, writable ...string) []property {
+// sandbox is the sandbox every unit of the slots carries, the runners'
+// and the exposure check's, which hides hidden and lets it write
+// writable (ADRs 0007 and 0014): the service account as User=, the
+// slots' slice, a read-only system, no homes, and the decided
+// protections. A writable path that starts with "-" may be missing.
+func (s *Slots) sandbox(hidden []string, writable ...string) []property {
 	inaccessible := make([]string, len(hidden))
 	for i, p := range hidden {
 		// "-": a path that's gone needs no hiding.
 		inaccessible[i] = "-" + p
 	}
 	props := []property{
-		{"User", dbus.MakeVariant(s.Account(n))},
+		{"User", dbus.MakeVariant(s.Account())},
 		{"Slice", dbus.MakeVariant(s.slice())},
 		{"ReadWritePaths", dbus.MakeVariant(writable)},
 	}
@@ -323,19 +361,6 @@ func (s *Slots) Kill(ctx context.Context, n int, runner string) error {
 		return nil
 	}
 	return err
-}
-
-// An Exit is how a unit's main process ended.
-type Exit struct {
-	// Code is its exit code, or 128 plus the signal that ended it, as a
-	// shell counts it: 137 for SIGKILL.
-	Code int
-	// OutOfMemory reports that the kernel's OOM killer ended a process
-	// of the unit while it ran, as systemd counts from the unit's
-	// memory.events. systemd keeps the count after the unit's cgroup is
-	// gone, while the unit stays loaded, so a kill just before the unit
-	// ended, the listener's own included, still counts.
-	OutOfMemory bool
 }
 
 // Wait waits for runner's listener in slot n to end, and returns how it
@@ -526,17 +551,6 @@ func (l Layout) parseUnit(unit string) (n int, runner string, ok bool) {
 	return n, runner, true
 }
 
-// runnerName is what a runner's name may be: ASCII letters, digits,
-// hyphens, underscores and dots, safe in a unit's name and a path.
-var runnerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
-
-func checkRunner(runner string) error {
-	if !runnerName.MatchString(runner) {
-		return fmt.Errorf("%q isn't a runner name", runner)
-	}
-	return nil
-}
-
 // manager calls method on systemd's manager.
 func (s *Slots) manager(ctx context.Context, method string, args ...any) *dbus.Call {
 	return s.bus.Object(systemd, "/org/freedesktop/systemd1").CallWithContext(ctx, manager+"."+method, 0, args...)
@@ -555,66 +569,4 @@ func gone(err error) bool {
 		return true
 	}
 	return false
-}
-
-// ownDir checks that path is a directory, not a link, that uid owns,
-// with mode perm.
-func ownDir(path string, uid int, perm os.FileMode) error {
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	st, _ := fi.Sys().(*syscall.Stat_t)
-	if !fi.IsDir() || st == nil || int(st.Uid) != uid || fi.Mode().Perm() != perm {
-		return fmt.Errorf("%s isn't a directory of its own with mode %o", path, perm)
-	}
-	return nil
-}
-
-// runnerFile is the file in a slot's folder that names the runner Start
-// last started there, until the slot's reset has copied its logs.
-const runnerFile = "runner-name"
-
-// recordedRunner returns the runner slot n's record names, or "" if
-// there's none.
-func (s *Slots) recordedRunner(n int) string {
-	b, err := os.ReadFile(filepath.Join(s.Folder(n), runnerFile))
-	if runner := strings.TrimSpace(string(b)); err == nil && checkRunner(runner) == nil {
-		return runner
-	}
-	return ""
-}
-
-// writeRecord writes value to a record file at path, readable by every
-// account, through a new file renamed into place, so that a crash leaves
-// the old record or the new one.
-func writeRecord(path, value string) error {
-	tmp := path + ".new"
-	err := os.WriteFile(tmp, []byte(value+"\n"), 0o644)
-	if err == nil {
-		err = os.Rename(tmp, path)
-	}
-	if err != nil {
-		os.Remove(tmp)
-	}
-	return err
-}
-
-// writeConfig writes config to a new file at path that only uid and gid
-// may read. It never follows a link there, and replaces a file an
-// earlier attempt left.
-func writeConfig(path string, config secret.Value, uid, gid int) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = f.WriteString(config.Reveal())
-	err = errors.Join(err, f.Chown(uid, gid), f.Close())
-	if err != nil {
-		os.Remove(path)
-	}
-	return err
 }

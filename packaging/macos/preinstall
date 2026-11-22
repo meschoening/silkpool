@@ -1,0 +1,83 @@
+#!/bin/sh
+# The .pkg's preinstall script (ADR 0013). installer runs it as root,
+# with the .pkg's path, the install location, the target volume and the
+# startup disk's root. It refuses a downgrade: the receipt of a Silkpool
+# .pkg already installed on the volume names its version, and one newer
+# than this .pkg's stops the install before anything is copied. The
+# agent's store would refuse an older agent anyway.
+set -eu
+
+id=io.github.meschoening.silkpool
+new='@VERSION@'
+
+# newer reports whether the version $1 is newer than $2, by semver's
+# precedence: the release's numbers, then a release over its
+# prereleases, then each prerelease identifier, numbers below words.
+newer() {
+	LC_ALL=C awk -v a="$1" -v b="$2" '
+	# cmpstr compares as strings, byte by byte: awk would compare two
+	# strings that look like numbers, such as 1e5, as numbers.
+	function cmpstr(x, y) {
+		x = x ""
+		y = y ""
+		return x < y ? -1 : (x > y ? 1 : 0)
+	}
+	# cmpnum compares two runs of digits without leading zeros, of any
+	# length.
+	function cmpnum(x, y) {
+		if (length(x) != length(y)) return length(x) < length(y) ? -1 : 1
+		return cmpstr(x, y)
+	}
+	function cmpid(x, y,    xn, yn) {
+		xn = x ~ /^[0-9]+$/
+		yn = y ~ /^[0-9]+$/
+		if (xn && yn) return cmpnum(x, y)
+		if (xn) return -1
+		if (yn) return 1
+		return cmpstr(x, y)
+	}
+	function cmp(x, y,    xc, yc, xp, yp, i, c, xs, ys, n, m) {
+		xc = x; xp = ""
+		if ((i = index(x, "-")) > 0) { xc = substr(x, 1, i - 1); xp = substr(x, i + 1) }
+		yc = y; yp = ""
+		if ((i = index(y, "-")) > 0) { yc = substr(y, 1, i - 1); yp = substr(y, i + 1) }
+		split(xc, xs, "."); split(yc, ys, ".")
+		for (i = 1; i <= 3; i++) if ((c = cmpnum(xs[i], ys[i])) != 0) return c
+		if (xp == "" || yp == "") return (xp == "") - (yp == "")
+		n = split(xp, xs, "."); m = split(yp, ys, ".")
+		for (i = 1; i <= n && i <= m; i++) if ((c = cmpid(xs[i], ys[i])) != 0) return c
+		return (n > m) - (n < m)
+	}
+	BEGIN { exit cmp(a, b) > 0 ? 0 : 1 }'
+}
+
+# refuse stops the install, since whether it's a downgrade isn't known.
+refuse() {
+	echo "Refusing to install Silkpool $new: $1, so whether it's a downgrade isn't known." >&2
+	exit 1
+}
+
+# The receipt's version, or nothing if pkgutil says there's no receipt.
+# pkgutil exits 1 for a receipt that isn't there and for its other
+# failures alike, so only its words tell them apart, and any other
+# answer, or a receipt whose version isn't one line of a release's
+# version, stops the install.
+volume=${3:-/}
+if info=$(pkgutil --volume "$volume" --pkg-info "$id" 2>&1); then
+	old=$(printf '%s\n' "$info" | sed -n 's/^version: //p')
+	case "$old" in
+	*"
+"*) refuse "the receipt of the Silkpool on $volume names more than one version" ;;
+	esac
+	printf '%s\n' "$old" | grep -Eqx '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?' ||
+		refuse "the receipt of the Silkpool on $volume names the version '$old'"
+else
+	case "$info" in
+	"No receipt for '$id' found at '$volume'.") old='' ;;
+	*) refuse "pkgutil couldn't read the receipt of the Silkpool on $volume: $info" ;;
+	esac
+fi
+if [ -n "$old" ] && newer "$old" "$new"; then
+	echo "Refusing to downgrade Silkpool from $old to $new: Silkpool can't go back a version." >&2
+	exit 1
+fi

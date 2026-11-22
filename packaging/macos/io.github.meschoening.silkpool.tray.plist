@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.github.meschoening.silkpool.tray</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/Silkpool.app/Contents/MacOS/Silkpool</string>
+		<string>--sign-in</string>
+	</array>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>io.github.meschoening.silkpool</string>
+	</array>
+</dict>
+</plist>

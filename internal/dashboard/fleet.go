@@ -16,6 +16,7 @@ import (
 	"github.com/meschoening/silkpool/internal/pool"
 	"github.com/meschoening/silkpool/internal/ui"
 	"github.com/meschoening/silkpool/internal/wording"
+	"github.com/meschoening/silkpool/internal/zone"
 )
 
 // The fleet's pages, as variant A of "Prototype the Hub dashboard"
@@ -59,16 +60,18 @@ func (d *Dashboard) fleetAccess(w http.ResponseWriter, r *http.Request) (access,
 func nodePath(name string) string { return "/nodes/" + url.PathEscape(name) }
 
 // clock returns the clock a node's words print times in: its own
-// auto-resume zone, named when its clock reads other than the Hub's.
-func (d *Dashboard) clock(zone *time.Location) wording.Clock {
+// auto-resume zone, or zone.Default if it has none, named when its
+// clock reads other than the Hub's. The Hub's own zone is never the
+// node's, so auto-resume's editor doesn't start a draft on it.
+func (d *Dashboard) clock(z *time.Location) wording.Clock {
 	now := d.now()
-	if zone == nil {
-		zone = now.Location()
+	if z == nil {
+		z = zone.Default()
 	}
-	c := wording.Clock{Now: now, Zone: zone}
+	c := wording.Clock{Now: now, Zone: z}
 	_, ours := now.Zone()
-	if _, theirs := now.In(zone).Zone(); ours == theirs {
-		c.Own = zone.String()
+	if _, theirs := now.In(z).Zone(); ours == theirs {
+		c.Own = z.String()
 	}
 	return c
 }
@@ -80,9 +83,10 @@ func (d *Dashboard) hubClock() wording.Clock {
 }
 
 // joined is a node as it joins, which the dashboard shows of a node
-// that hasn't reported yet: Paused indefinitely, with one free slot.
+// that hasn't reported yet: Paused indefinitely, with one free slot, and
+// auto-resume in Central, Silkpool's default, since its zone isn't known.
 var joined = func() node.Node {
-	n, err := node.New(time.UTC)
+	n, err := node.New(zone.Default())
 	if err != nil {
 		panic(err)
 	}
@@ -367,7 +371,10 @@ func (d *Dashboard) showNode(w http.ResponseWriter, r *http.Request, a access, n
 	p.Login = a.who.Login
 	p.Refusal, p.RefusedIn = ans.refusal, ans.in
 	if ans.draft != nil {
-		p.Editor = d.editor(p.Node, *ans.draft, ans.revision)
+		// The draft didn't read, so the refusal under it says why, and
+		// there's no schedule to preview.
+		p.Editor = ui.EditorFor(p.Node, *ans.draft, ans.revision)
+		p.Editor.Preview = ""
 	}
 	if ans.name != nil {
 		p.Renaming, p.Draft = true, *ans.name
@@ -418,7 +425,7 @@ func (d *Dashboard) nodePage(f hubops.Fleet, det hubops.Detail, q url.Values) no
 		if err != nil {
 			rev = m.Availability.Revision
 		}
-		p.Editor = d.editor(n, m.Availability.AutoResume, rev)
+		p.Editor = ui.EditorFor(n, m.Availability.AutoResume, rev)
 	}
 	if q.Has("rename") && !det.Removing {
 		p.Renaming, p.Draft = true, det.Name
@@ -453,24 +460,6 @@ func (d *Dashboard) status(n ui.Node, c *hubops.Command) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// zones are the time zones auto-resume's editor offers, beside the
-// node's own.
-var zones = []string{
-	"UTC", "America/Los_Angeles", "America/Denver", "America/Chicago", "America/New_York", "America/Sao_Paulo",
-	"Europe/London", "Europe/Berlin", "Europe/Helsinki", "Africa/Johannesburg", "Asia/Kolkata", "Asia/Singapore",
-	"Asia/Tokyo", "Australia/Sydney", "Pacific/Auckland",
-}
-
-// editor returns auto-resume's editor for n, open on draft, based on
-// revision.
-func (d *Dashboard) editor(n ui.Node, draft availability.AutoResume, revision int64) *ui.Editor {
-	offered := zones
-	if z := draft.Zone; z != nil && !slices.Contains(zones, z.String()) {
-		offered = append([]string{z.String()}, zones...)
-	}
-	return &ui.Editor{Post: n.Post, Draft: draft, Preview: n.DraftPreview(draft), Zones: offered, Revision: revision}
 }
 
 // answered answers a node's form: on to the node's page at path after a
@@ -609,9 +598,11 @@ func sameSchedule(a, b availability.AutoResume) bool {
 
 // parseAutoResume reads auto-resume's settings from the form: on, the
 // time as HH:MM, each day as its number, and the zone by its IANA name.
-// What it can read comes back with the refusal.
+// What it can read comes back with the refusal, the time's first, so the
+// editor shows again as it was posted.
 func parseAutoResume(r *http.Request) (availability.AutoResume, error) {
 	var out availability.AutoResume
+	var refused error
 	_ = r.ParseForm()
 	out.On = r.PostForm.Get("on") != ""
 	for _, v := range r.PostForm["days"] {
@@ -619,18 +610,18 @@ func parseAutoResume(r *http.Request) (availability.AutoResume, error) {
 			out.Days |= availability.DaysOf(time.Weekday(day))
 		}
 	}
-	t, err := time.Parse("15:04", r.PostForm.Get("time"))
-	if err != nil {
-		return out, refusal("invalid-time", "write the time as HH:MM, such as 07:30")
+	if t, err := time.Parse("15:04", r.PostForm.Get("time")); err == nil {
+		out.Time = availability.TimeOfDay{Hour: t.Hour(), Minute: t.Minute()}
+	} else {
+		refused = refusal("invalid-time", "write the time as HH:MM, such as 07:30")
 	}
-	out.Time = availability.TimeOfDay{Hour: t.Hour(), Minute: t.Minute()}
 	zone := r.PostForm.Get("zone")
-	z, err := time.LoadLocation(zone)
-	if err != nil || zone == "" || zone == "Local" {
-		return out, refusal("invalid-zone", "choose a time zone")
+	if z, err := time.LoadLocation(zone); err == nil && zone != "" && zone != "Local" {
+		out.Zone = z
+	} else if refused == nil {
+		refused = refusal("invalid-zone", "choose a time zone")
 	}
-	out.Zone = z
-	return out, nil
+	return out, refused
 }
 
 // dismiss dismisses one of the node's notices.

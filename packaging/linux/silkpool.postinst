@@ -1,10 +1,13 @@
 #!/bin/sh
 # The silkpool package's postinstall script (ADR 0013). dpkg runs it with
 # "configure", and rpm with the number of copies there are. On a first
-# install and on an upgrade alike, it enables the agent's unit and
-# restarts it, which starts it if it isn't running: the agent idles until
-# the machine is enrolled. Without a running systemd, as when an image is
-# built, it only enables the unit.
+# install and on an upgrade alike, it makes the service account every
+# slot runs as, or checks it, then enables the agent's unit and restarts
+# it, which starts it if it isn't running: the agent idles until the
+# machine is enrolled. Without a running systemd, as when an image is
+# built, it only enables the unit. An account it can't make doesn't stop
+# the install: the agent checks it again, and closes every slot, saying
+# why, until it's fixed (ADR 0007).
 set -e
 
 case "$1" in
@@ -12,6 +15,9 @@ configure | [0-9]*) ;;
 *) exit 0 ;;
 esac
 
+if [ -x /usr/bin/silkpool ] && ! /usr/bin/silkpool make-service-account; then
+	echo "Silkpool couldn't make its service account, so its slots stay closed until that's fixed." >&2
+fi
 systemctl enable silkpool.service
 if [ -d /run/systemd/system ]; then
 	systemctl daemon-reload

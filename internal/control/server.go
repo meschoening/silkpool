@@ -52,8 +52,14 @@ type Server struct {
 	// Version is the agent's version, which the hello carries.
 	Version string
 	// Lookup returns the account a peer's uid names, or nil for
-	// LookupAccount. Only tests set it.
+	// LookupAccount. Only tests set it. Windows's own peer check reads
+	// the account from the caller's token, and doesn't use it.
 	Lookup func(uid int) (Account, error)
+	// PeerUID returns the uid of the process at the other end of a
+	// connection, or is nil for the OS's peer check. Only tests set it,
+	// to run the channel's protocol over a Unix socket on Windows, whose
+	// own peer check is the named pipe's.
+	PeerUID func(net.Conn) (int, error)
 	// Log is where the server logs, or nil for slog.Default.
 	Log *slog.Logger
 }
@@ -116,23 +122,30 @@ func (s *Server) serve(ctx context.Context, c net.Conn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer c.Close()
-	stop := context.AfterFunc(ctx, func() { c.Close() })
-	defer stop()
-	uid, err := peerUID(c)
-	if err != nil {
-		s.log().Warn("couldn't tell who connected to the control socket", "err", err)
-		return
-	}
 	lookup := s.Lookup
 	if lookup == nil {
 		lookup = LookupAccount
 	}
-	account, err := lookup(uid)
+	// The peer check comes before anything can close c, so it never reads
+	// a handle that's been closed, or reused, under it. It ends with ctx
+	// on its own.
+	var account Account
+	var err error
+	if s.PeerUID != nil {
+		account, err = identifyByUID(c, s.PeerUID, lookup)
+	} else {
+		account, err = identify(ctx, c, lookup)
+	}
 	if err != nil {
-		s.log().Warn("couldn't look up the account that connected to the control socket", "uid", uid, "err", err)
-		_ = write(c, message{Type: typeError, Error: &Error{Message: fmt.Sprintf("the agent couldn't look up account %d", uid)}})
+		s.log().Warn("couldn't tell who connected to the control channel", "err", err)
+		var lookupErr lookupFailed
+		if errors.As(err, &lookupErr) {
+			_ = write(c, message{Type: typeError, Error: &Error{Message: fmt.Sprintf("the agent couldn't look up account %d", lookupErr.uid)}})
+		}
 		return
 	}
+	stop := context.AfterFunc(ctx, func() { c.Close() })
+	defer stop()
 	if !account.Admin {
 		_ = write(c, message{Type: typeRefused, Account: account.Name, Error: &Error{Code: CodeNotAdmin,
 			Message: fmt.Sprintf("only administrators can use Silkpool on this machine, and %s isn't one", account.Name)}})
@@ -183,14 +196,41 @@ type peer struct {
 	elevated bool
 }
 
-// elevatedOnly refuses a request that needs uid 0 from a peer that
-// isn't.
+// elevatedOnly refuses a request that needs elevation from a peer that
+// isn't elevated.
 func elevatedOnly(what string, p peer) *Error {
 	if p.elevated {
 		return nil
 	}
-	return &Error{Code: CodeNotElevated, Message: what + " needs root: run it with sudo"}
+	return &Error{Code: CodeNotElevated, Message: what + " " + needsElevation}
 }
+
+// identifyByUID returns the account of the process at the other end of
+// c, by its uid, which check reads, and lookup names.
+func identifyByUID(c net.Conn, check func(net.Conn) (int, error), lookup func(int) (Account, error)) (Account, error) {
+	uid, err := check(c)
+	if err != nil {
+		return Account{}, err
+	}
+	account, err := lookup(uid)
+	if err != nil {
+		return Account{}, lookupFailed{uid: uid, err: err}
+	}
+	return account, nil
+}
+
+// lookupFailed fails a peer check whose uid the account database
+// couldn't name. The caller is told.
+type lookupFailed struct {
+	uid int
+	err error
+}
+
+func (e lookupFailed) Error() string {
+	return fmt.Sprintf("control: looking up account %d: %v", e.uid, e.err)
+}
+
+func (e lookupFailed) Unwrap() error { return e.err }
 
 // handle answers one request.
 func (s *Server) handle(ctx context.Context, m message, p peer) message {
@@ -204,6 +244,14 @@ func (s *Server) handle(ctx context.Context, m message, p peer) message {
 			return fail(err)
 		}
 		return message{Type: typeReply, Reply: &reply}
+	}
+	origin := p.origin
+	switch m.Surface {
+	case "":
+	case surfaceTray:
+		origin.Surface = node.Tray
+	default:
+		return fail(&Error{Code: CodeBadRequest, Message: fmt.Sprintf("%q isn't a surface a request can come from", m.Surface)})
 	}
 	switch m.Type {
 	case typeStatus:
@@ -220,19 +268,19 @@ func (s *Server) handle(ctx context.Context, m message, p peer) message {
 		if err != nil {
 			return fail(&Error{Code: CodeBadRequest, Message: err.Error()})
 		}
-		return replied(s.Agent.Command(ctx, node.Command{ID: m.ID, Origin: p.origin, Event: ev}))
+		return replied(s.Agent.Command(ctx, node.Command{ID: m.ID, Origin: origin, Event: ev}))
 	case typeDismiss:
-		return s.dismiss(ctx, m, p, replied)
+		return s.dismiss(ctx, m, origin, replied)
 	case typeEnroll:
 		if e := elevatedOnly("enroll", p); e != nil {
 			return fail(e)
 		}
-		return replied(s.Agent.Enroll(ctx, Enrollment{ID: m.ID, Origin: p.origin, Code: m.Code, Name: m.Name}))
+		return replied(s.Agent.Enroll(ctx, Enrollment{ID: m.ID, Origin: origin, Code: m.Code, Name: m.Name}))
 	case typeRemove:
 		if e := elevatedOnly("remove", p); e != nil {
 			return fail(e)
 		}
-		return replied(s.Agent.Remove(ctx, node.Remove{ID: m.ID, Origin: p.origin, Local: true, Force: m.Force}))
+		return replied(s.Agent.Remove(ctx, node.Remove{ID: m.ID, Origin: origin, Local: true, Force: m.Force}))
 	case typeSetHubURL:
 		if e := elevatedOnly("set-hub-url", p); e != nil {
 			return fail(e)
@@ -251,15 +299,15 @@ func (s *Server) handle(ctx context.Context, m message, p peer) message {
 	return fail(&Error{Code: CodeBadRequest, Message: fmt.Sprintf("%q isn't a request the agent takes", m.Type)})
 }
 
-// dismiss dismisses each notice the request names, as one command each,
-// and answers with the first refusal, or the last reply.
-func (s *Server) dismiss(ctx context.Context, m message, p peer, replied func(node.Reply, error) message) message {
+// dismiss dismisses each notice the request names, as one command each
+// from origin, and answers with the first refusal, or the last reply.
+func (s *Server) dismiss(ctx context.Context, m message, origin node.Origin, replied func(node.Reply, error) message) message {
 	if len(m.Notices) == 0 {
 		return message{Type: typeError, Error: &Error{Code: CodeBadRequest, Message: "a dismissal that names no notice"}}
 	}
 	var last node.Reply
 	for _, id := range m.Notices {
-		r, err := s.Agent.Dismiss(ctx, node.Dismiss{ID: fmt.Sprintf("%s/%d", m.ID, id), Origin: p.origin, Notice: id})
+		r, err := s.Agent.Dismiss(ctx, node.Dismiss{ID: fmt.Sprintf("%s/%d", m.ID, id), Origin: origin, Notice: id})
 		if err != nil || r.Refused != nil {
 			return replied(r, err)
 		}

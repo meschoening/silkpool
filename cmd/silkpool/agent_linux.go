@@ -9,10 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -125,22 +123,6 @@ func serve(ctx context.Context, logDir string) error {
 	return await(ran, served, cancel)
 }
 
-// await waits for the agent or its control server to end, then ends the
-// other and waits for it too, so neither outlives the store. It returns
-// the first one's error.
-func await(ran, served <-chan error, cancel func()) error {
-	var err error
-	select {
-	case err = <-ran:
-		cancel()
-		<-served
-	case err = <-served:
-		cancel()
-		<-ran
-	}
-	return err
-}
-
 // platform is the runner application's platform for this build.
 func platform() runnerapp.Platform {
 	if runtime.GOARCH == "arm64" {
@@ -194,35 +176,4 @@ func prettyName(r io.Reader) string {
 		}
 	}
 	return "Linux"
-}
-
-// zoneName is the OS's time zone by its IANA name: TZ if it names one,
-// else what /etc/localtime links to, else /etc/timezone.
-func zoneName() string {
-	if tz := strings.TrimPrefix(os.Getenv("TZ"), ":"); tz != "" && !filepath.IsAbs(tz) {
-		return tz
-	}
-	if link, err := os.Readlink("/etc/localtime"); err == nil {
-		if _, name, ok := strings.Cut(link, "zoneinfo/"); ok {
-			return name
-		}
-	}
-	if b, err := os.ReadFile("/etc/timezone"); err == nil {
-		if name := strings.TrimSpace(string(b)); name != "" {
-			return name
-		}
-	}
-	if _, err := time.LoadLocation("UTC"); err == nil {
-		return "UTC"
-	}
-	return ""
-}
-
-// freeDisk is the space free to root in dir's file system.
-func freeDisk(dir string) (uint64, error) {
-	var s unix.Statfs_t
-	if err := unix.Statfs(dir, &s); err != nil {
-		return 0, err
-	}
-	return s.Bfree * uint64(s.Bsize), nil
 }

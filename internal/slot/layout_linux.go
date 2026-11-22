@@ -1,23 +1,25 @@
 package slot
 
 import (
-	"fmt"
 	"path/filepath"
 	"strconv"
 )
 
-// A Layout is where a Linux node keeps its slots' folders and its
-// runners' logs, and the names it gives slot accounts and runner units.
-// Installed is the one the packages install. Tests use their own, so
-// that what they make doesn't meet another test's.
+// A Layout is where a Linux node keeps its service account's home, its
+// slots' folders and its runners' logs, and the names it gives the
+// service account and runner units. Installed is the one the packages
+// install. Tests use their own, so that what they make doesn't meet
+// another test's.
 type Layout struct {
-	// Name starts the name of every slot account, silkpool-slotN, and of
-	// every runner unit, silkpool-slotN-<runner>.service.
+	// Name is the name of the machine's service account, which every slot
+	// runs as (#214), and starts the name of every runner unit,
+	// silkpool-slotN-<runner>.service.
 	Name string
-	// Root is Silkpool's state folder. Slot N's folders are in
-	// Root/slots/N, and everything else in Root is state that no slot may
-	// see. Root and Root/slots must stay open to every account, so that a
-	// slot account reaches its own folders.
+	// Root is Silkpool's state folder. The service account's home is
+	// Root/home, slot N's folder is Root/slots/N, and everything else in
+	// Root is state that no slot may see. Root and Root/slots must stay
+	// open to every account, so that the service account reaches its
+	// home and the slots' folders.
 	Root string
 	// Logs is the agent's log folder. Each runner's listener output goes
 	// to its folder there, Logs/runners/<runner>. No slot may see it.
@@ -53,18 +55,19 @@ var Installed = Layout{
 	Slice:    "silkpool.slice",
 }
 
-// Account is the name of slot n's slot account, silkpool-slotN.
-func (l Layout) Account(n int) string { return fmt.Sprintf("%s-slot%d", l.Name, n) }
+// Account is the name of the machine's service account, which every
+// slot runs as: Name, such as silkpool.
+func (l Layout) Account() string { return l.Name }
 
-// Folder is slot n's folder, which root owns and holds its home and
-// runner root.
+// Home is the service account's home, which it owns, mode 0700. Every
+// slot shares it, so it's emptied only once every slot is idle.
+func (l Layout) Home() string { return filepath.Join(l.Root, "home") }
+
+// Folder is slot n's folder, which root owns and holds its runner root.
 func (l Layout) Folder(n int) string { return filepath.Join(l.Root, "slots", strconv.Itoa(n)) }
 
-// Home is slot n's slot account's home, which it owns, mode 0700.
-func (l Layout) Home(n int) string { return filepath.Join(l.Folder(n), "home") }
-
 // RunnerRoot is the root slot n's runners run from, one at a time. The
-// slot account owns it, mode 0700. The runner writes its settings,
+// service account owns it, mode 0700. The runner writes its settings,
 // credentials, `_diag` logs and `_work` folder there.
 func (l Layout) RunnerRoot(n int) string { return filepath.Join(l.Folder(n), "runner") }
 
@@ -76,3 +79,7 @@ func (l Layout) RunnerLogs(runner string) string { return filepath.Join(l.Logs, 
 func (l Layout) ListenerLog(runner string) string {
 	return filepath.Join(l.RunnerLogs(runner), "listener.log")
 }
+
+// LiveLog is the file runner's listener in slot n writes as it runs,
+// which on Linux is its ListenerLog.
+func (l Layout) LiveLog(_ int, runner string) string { return l.ListenerLog(runner) }

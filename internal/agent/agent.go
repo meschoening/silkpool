@@ -33,7 +33,9 @@ import (
 	"github.com/meschoening/silkpool/internal/node"
 	"github.com/meschoening/silkpool/internal/runnerapp"
 	"github.com/meschoening/silkpool/internal/secret"
+	"github.com/meschoening/silkpool/internal/winexecpolicy"
 	"github.com/meschoening/silkpool/internal/wire"
+	"github.com/meschoening/silkpool/internal/zone"
 )
 
 // OS carries out the node's effects on the machine: its slots, their
@@ -48,7 +50,7 @@ type OS interface {
 	// reports what comes of it through report, from any goroutine, and
 	// the agent applies the reports in the order they're made. The
 	// effects are node.PrepareSlot, a Listen, node.Interrupt, node.Kill,
-	// node.ResetSlot, node.DeleteAccount, node.InstallRunnerApp,
+	// node.ResetSlot, node.DeleteSlot, node.InstallRunnerApp,
 	// node.DeleteInstall, node.Wipe and node.ApplyBudget.
 	Carry(effect any, report func(node.Event))
 }
@@ -117,6 +119,9 @@ type Config struct {
 	// LogTail, if set, returns the last n lines of the agent's own log,
 	// for the diagnostics report.
 	LogTail func(n int) ([]string, error)
+	// ExecutionPolicy, if set, reads the execution policy each
+	// PowerShell's scripts meet, on Windows, for the diagnostics report.
+	ExecutionPolicy func() []winexecpolicy.Reading
 }
 
 // ErrCrashed is what Run returns after Config.Crash ended it.
@@ -446,7 +451,7 @@ func (a *Agent) carry(eff node.Effect) {
 		// The slots' checks were of the accounts the wipe deletes.
 		clear(a.checks)
 		a.machine(eff)
-	case node.PrepareSlot, node.Interrupt, node.Kill, node.ResetSlot, node.DeleteAccount,
+	case node.PrepareSlot, node.Interrupt, node.Kill, node.ResetSlot, node.DeleteSlot,
 		node.InstallRunnerApp, node.DeleteInstall, node.ApplyBudget:
 		a.machine(eff)
 	case node.WakeAt:
@@ -751,19 +756,20 @@ func (a *Agent) Enroll(ctx context.Context, e Enrollment) (node.Reply, error) {
 	return a.await(ctx, reply)
 }
 
-// zone loads the OS's zone by name, or returns nil, which the node
-// refuses, if it can't be loaded.
+// zone is the zone the node enrolls in: the OS's, loaded by name, or
+// Central, Silkpool's default, if the agent found none or can't load it,
+// so a missing zone never refuses the enroll.
 func (a *Agent) zone() *time.Location {
 	name := a.c.Machine.Zone
+	if z, ok := zone.Load(name); ok {
+		return z
+	}
 	if name == "" || name == "Local" {
-		return nil
+		a.log.Warn("found no OS time zone, so enrolling in the default zone", "default", zone.DefaultName)
+	} else {
+		a.log.Warn("couldn't load the OS's time zone, so enrolling in the default zone", "zone", name, "default", zone.DefaultName)
 	}
-	zone, err := time.LoadLocation(name)
-	if err != nil {
-		a.log.Warn("couldn't load the OS's time zone", "zone", name, "err", err)
-		return nil
-	}
-	return zone
+	return zone.Default()
 }
 
 // enrollAtHub sends the enroll under way to the Hub's enrollment

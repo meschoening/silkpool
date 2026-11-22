@@ -13,11 +13,6 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
-// WorkerProgram is the runner application's worker in a runner root:
-// the program the listener starts to run its job, just after taking it
-// (GLOSSARY.md's Worker).
-const WorkerProgram = "bin/Runner.Worker"
-
 // cgroupRoot is where systemd mounts the unified cgroup hierarchy.
 const cgroupRoot = "/sys/fs/cgroup"
 
@@ -28,7 +23,7 @@ const cgroupRoot = "/sys/fs/cgroup"
 // It looks at the processes in the unit's cgroup, so it never counts
 // another runner's, and no job code runs before the worker, so a job
 // can't fake one. A unit that's gone, or has no processes, has none.
-// Reading which program a slot account's process runs takes
+// Reading which program the service account's process runs takes
 // CAP_SYS_PTRACE, which root has. It may run beside Wait, Stop and Kill
 // on the same slot.
 func (s *Slots) WorkerUp(ctx context.Context, n int, runner string) (bool, error) {

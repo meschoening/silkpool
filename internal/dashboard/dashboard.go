@@ -65,14 +65,17 @@ type Dashboard struct {
 	log       *slog.Logger
 	now       func() time.Time
 	liveEvery time.Duration
-	pages     map[string]*template.Template
-	sessions  *sessions
-	mux       *http.ServeMux
+	// installers are the OSes Add node offers commands for:
+	// wording.Shipped, which only tests change.
+	installers wording.Installers
+	pages      map[string]*template.Template
+	sessions   *sessions
+	mux        *http.ServeMux
 }
 
 // New returns the dashboard over c.Ops.
 func New(c Config) *Dashboard {
-	d := &Dashboard{ops: c.Ops, log: c.Log, now: c.Now, liveEvery: c.LiveEvery, pages: parsePages()}
+	d := &Dashboard{ops: c.Ops, log: c.Log, now: c.Now, liveEvery: c.LiveEvery, installers: wording.Shipped, pages: parsePages()}
 	if d.log == nil {
 		d.log = slog.Default()
 	}

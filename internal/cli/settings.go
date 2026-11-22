@@ -12,6 +12,7 @@ import (
 	"github.com/meschoening/silkpool/internal/availability"
 	"github.com/meschoening/silkpool/internal/store"
 	"github.com/meschoening/silkpool/internal/wording"
+	silkzone "github.com/meschoening/silkpool/internal/zone"
 )
 
 // settingsJSON is a read of the settings as --json prints it: the
@@ -103,10 +104,13 @@ func editAutoResume(ctx context.Context, s *session, form string, args []string)
 	if code != ExitOK {
 		return code
 	}
+	// A machine whose agent found no zone, or none Go can load, is on
+	// Central, Silkpool's default, as everywhere else.
+	unknown := false
 	if set["zone"] && local(*zoneText) {
 		var ok bool
 		if zone, ok = loadZone(r.status.Machine.Zone); !ok {
-			return s.usage(fs, "This machine's own time zone has no IANA name, so name one, such as --zone America/Chicago.")
+			zone, unknown = silkzone.Default(), true
 		}
 	}
 	to := r.node.Availability.AutoResume
@@ -126,6 +130,9 @@ func editAutoResume(ctx context.Context, s *session, form string, args []string)
 	_, after, code := s.command(ctx, r, availability.EditAutoResume{Base: b, To: to}, given)
 	if code != ExitOK || s.json {
 		return code
+	}
+	if unknown {
+		fmt.Fprintf(s.env.Stdout, "This machine's own time zone isn't known, so local is Central, %s.\n", silkzone.DefaultName)
 	}
 	s.autoResume(r.with(after))
 	return ExitOK
@@ -157,11 +164,10 @@ func local(zone string) bool { return strings.EqualFold(zone, "local") }
 // "Local" as whatever the machine's zone is at the time, which isn't a
 // name auto-resume can keep.
 func loadZone(name string) (*time.Location, bool) {
-	if name == "" || local(name) {
+	if local(name) {
 		return nil, false
 	}
-	zone, err := time.LoadLocation(name)
-	return zone, err == nil
+	return silkzone.Load(name)
 }
 
 // parseAt parses --at's 24-hour time, as 07:30 or 7:30.

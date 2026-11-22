@@ -8,16 +8,20 @@
 {{- end}}
 </div>{{end}}
 
-{{/* The code this browser made, with its commands per OS and whether a machine has used it, or Make a code; then the other codes, with Revoke for the open ones. */}}
+{{/* The code this browser made, with its commands per OS, or that the release has no installers for the OS yet, and whether a machine has used it, or Make a code; then the other codes, with Revoke for the open ones. */}}
 {{define "add-node"}}<div class="narrow" id="add-node">
 {{- with .Made}}
 {{- if eq .State "open"}}
 <p class="meta">Enrollment code · single use · expires {{.Expires}}</p>
 {{template "copy" .Text}}
 <div class="row os"><b class="h2">On the machine</b><span class="tabs">{{range $.Tabs}}<a href="/nodes/add?os={{.Key}}"{{if .On}} aria-current="page"{{end}}>{{.Title}}</a>{{end}}</span></div>
+{{- with $.NotYet}}
+<div class="cmd"><p>{{.}}</p></div>
+{{- else}}
 <div class="cmd"><p>{{$.Install.Where}}, install Silkpool and enroll with this code:</p>{{template "copy" $.Install.Command}}</div>
 <div class="cmd"><p>Silkpool installed already? {{$.Enroll.Where}}:</p>{{template "copy" $.Enroll.Command}}</div>
 <p class="meta">It joins under its hostname. Add <code>--name</code> to choose another. It joins paused, so nothing runs until you resume it.</p>
+{{- end}}
 <p class="pending wait">{{template "glyph-key" (glyph "starting" 14)}}<span class="dim">Waiting for a machine to use this code…</span></p>
 {{- else if eq .State "used"}}
 <p class="wait">✓ <span><b>{{.Node}}</b> joined with this code. <a class="lnk is-ink" href="{{.NodePath}}">Open {{.Node}}</a></span></p>

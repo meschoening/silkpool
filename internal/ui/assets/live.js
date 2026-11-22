@@ -13,7 +13,8 @@
 //   silkpool.apply.
 // - A form that posts to this page's origin is posted by fetch, and the
 //   answer is morphed in: a refusal's page, or the page a redirect lands
-//   on. Other forms, such as the App manifest's to GitHub, and forms
+//   on, or the page its Content-Location names. A redirect the web view
+//   hands back unfollowed is loaded. Other forms, such as the App manifest's to GitHub, and forms
 //   marked data-native, are posted by the browser.
 // - A button with data-copy copies its text to the clipboard.
 (() => {
@@ -120,6 +121,14 @@
 
   // show morphs res, the answer to form's post, into the page.
   function show(res, text, form) {
+    const to = res.headers.get('Location');
+    if (res.status >= 300 && res.status < 400 && to) {
+      // A redirect the web view didn't follow, as WebKit doesn't from an
+      // app's own scheme handler (#286): load where it leads, rather
+      // than morph its empty answer in.
+      location.assign(new URL(to, res.url || location.href));
+      return;
+    }
     if (!(res.headers.get('Content-Type') || '').startsWith('text/html')) {
       // An answer that isn't a page, such as a failure, shows as the
       // browser shows it.
@@ -129,8 +138,12 @@
       document.body.removeAttribute('data-stream');
     } else {
       const page = new DOMParser().parseFromString(text, 'text/html');
-      if (res.redirected && res.url !== here()) {
-        history.pushState(null, '', res.url);
+      // Where the answer is from: where a redirect landed, or the page
+      // an answer names as its Content-Location, as the tray's does.
+      const named = res.headers.get('Content-Location');
+      const at = res.redirected ? res.url : named ? new URL(named, res.url || location.href).href : '';
+      if (at && at !== here()) {
+        history.pushState(null, '', at);
         shown = location.pathname + location.search;
         scrollTo(0, 0);
       }

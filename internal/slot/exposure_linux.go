@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,9 +30,10 @@ import (
 // on each OS"
 // and ADR 0005.
 
-// Exposed is a slot whose exposure check found something outside its own
-// folders that it can read, or a folder of the OS's software that it can
-// change. It fails closed with Slot can see files outside its own, until
+// Exposed is an exposure check that found something outside the slots'
+// own folders that the service account can read, or a folder of the
+// OS's software that it can change. Every slot runs as the account, so
+// every slot fails closed with Slot can see files outside its own, until
 // a check finds nothing.
 type Exposed struct {
 	// Detail names the first thing the check found, and its fix.
@@ -43,17 +45,30 @@ func (e *Exposed) Error() string { return e.Detail }
 
 // Ready readies slot n for a runner, as PrepareSlot asks, and returns
 // what the node applies: Prepared, or PrepareFailed with SlotCantStart or
-// SlotExposed. It prepares the slot's account (Prepare), then runs the
-// exposure check as it (Check). Any failure but a hit is SlotCantStart:
-// the slot can't be vouched for.
+// SlotExposed. It makes the slot's folder and checks the machine's
+// service account (PrepareAccount), runs the account-wide clean if it's
+// due, holding the slot while it waits for every slot to be idle
+// (cleanFirst), then runs the machine's exposure check (Check). Any
+// failure but a hit is SlotCantStart: the slot can't be vouched for.
 func (s *Slots) Ready(ctx context.Context, n int) node.Event {
-	err := s.Prepare(n)
+	err := s.folders(n)
+	if err != nil {
+		err = fmt.Errorf("couldn't make slot %d's folder: %w", n, err)
+	}
 	var cant *CantStart
-	if err != nil && !errors.As(err, &cant) {
-		err = fmt.Errorf("couldn't prepare slot %d's account: %w", n, err)
+	if err == nil {
+		s.account.Lock()
+		err = s.PrepareAccount()
+		s.account.Unlock()
+		if err != nil && !errors.As(err, &cant) {
+			err = fmt.Errorf("couldn't prepare the service account: %w", err)
+		}
 	}
 	if err == nil {
-		err = s.Check(ctx, n)
+		err = s.cleanFirst(ctx)
+	}
+	if err == nil {
+		err = s.Check(ctx)
 	}
 	var exposed *Exposed
 	switch {
@@ -67,32 +82,54 @@ func (s *Slots) Ready(ctx context.Context, n int) node.Event {
 	return node.PrepareFailed{Slot: n, Reason: node.SlotCantStart, Detail: detail(err)}
 }
 
+// CheckAccount checks the machine's service account for drift as the
+// agent starts, restoring what Silkpool owns (PrepareAccount). A failure
+// closes every slot as each is next prepared. It takes a context as the
+// Mac's does, which needs one for dscl.
+func (s *Slots) CheckAccount(context.Context) error {
+	s.account.Lock()
+	defer s.account.Unlock()
+	return s.PrepareAccount()
+}
+
 // checkTimeout is how long an exposure check may take.
 const checkTimeout = 2 * time.Minute
 
-// Check runs slot n's exposure check as its slot account, in a unit with
-// its runners' sandbox, recomputed now, so that it sees what a job would.
-// It returns nil if the slot can see nothing outside its own folders and
-// the OS folders, and can change no folder of the OS's software; an
-// *Exposed naming the first thing it found; or another error, such as a
-// sandbox that can't be set up.
+// Check runs the machine's exposure check as the service account, once
+// for the machine rather than once for each slot (ADR 0005), in a unit
+// with the runners' sandbox, recomputed now, hiding every slot's folder,
+// so that it sees what a job would. A Check asked for while one runs
+// shares its result. It returns nil if the account can see nothing
+// outside the slots' folders, its home and the OS folders, and can change
+// no folder of the OS's software; an *Exposed naming the first thing it
+// found; or another error, such as a sandbox that can't be set up.
 //
 //   - The read check probes each entry and mount at the top of the file
 //     system outside the OS folders, and each home in /home, and /root.
 //     The agent lists them from outside the unit, so that the sandbox
 //     can't keep them from the check.
 //   - The write check walks /usr, /opt, /nix and /snap for a folder that
-//     the slot can write to, that isn't sticky and isn't the slot's own.
+//     the account can write to, that isn't sticky and isn't its own.
 //
-// The Linux sandbox should leave a slot nothing to find, so the check
+// The Linux sandbox should leave a job nothing to find, so the check
 // proves that it does.
-func (s *Slots) Check(ctx context.Context, n int) error {
-	if _, err := user.Lookup(s.Account(n)); err != nil {
-		return fmt.Errorf("can't find slot %d's account: %w", n, err)
+func (s *Slots) Check(ctx context.Context) error {
+	return s.checks.do(ctx, func() error {
+		// The account-wide clean waits for the check, which runs as the
+		// account.
+		s.use.RLock()
+		defer s.use.RUnlock()
+		return s.check(context.WithoutCancel(ctx))
+	})
+}
+
+func (s *Slots) check(ctx context.Context) error {
+	if _, err := user.Lookup(s.Account()); err != nil {
+		return fmt.Errorf("can't find the service account: %w", err)
 	}
 	v, err := s.look()
 	if err != nil {
-		return fmt.Errorf("can't work out what slot %d may see: %w", n, err)
+		return fmt.Errorf("can't work out what the slots may see: %w", err)
 	}
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -101,18 +138,17 @@ func (s *Slots) Check(ctx context.Context, n int) error {
 	defer r.Close()
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
-	unit := s.checkUnit(n, strings.ToLower(rand.Text()[:8]))
+	unit := s.checkUnit(strings.ToLower(rand.Text()[:8]))
 	props := slices.Concat([]property{
-		{"Description", dbus.MakeVariant(fmt.Sprintf("Silkpool exposure check of slot %d", n))},
+		{"Description", dbus.MakeVariant("Silkpool exposure check")},
 		{"Type", dbus.MakeVariant("exec")},
 		{"ExecStart", dbus.MakeVariant([]execCommand{{s.Launcher, append([]string{s.Launcher, CheckMode}, v.exposable()...), false}})},
 		{"StandardOutputFileDescriptor", dbus.MakeVariant(dbus.UnixFD(w.Fd()))},
 		{"RuntimeMaxUSec", dbus.MakeVariant(uint64(checkTimeout / time.Microsecond))},
 		{"AddRef", dbus.MakeVariant(true)},
 		{"CollectMode", dbus.MakeVariant("inactive-or-failed")},
-		// The runner root is made for each runner, after the check.
-	}, s.sandbox(n, s.hidden(n, v), s.Home(n), "-"+s.RunnerRoot(n)))
-	err = s.startUnit(ctx, unit, props, fmt.Sprintf("slot %d's exposure check", n))
+	}, s.sandbox(s.hidden(0, v), s.Home()))
+	err = s.startUnit(ctx, unit, props, "the exposure check")
 	w.Close()
 	if err != nil {
 		return err
@@ -131,7 +167,7 @@ func (s *Slots) Check(ctx context.Context, n int) error {
 	code := exit.Code
 	if err != nil {
 		s.manager(context.WithoutCancel(ctx), "KillUnit", unit, "all", int32(syscall.SIGKILL))
-		return fmt.Errorf("slot %d's exposure check didn't finish: %w", n, err)
+		return fmt.Errorf("the exposure check didn't finish: %w", err)
 	}
 	// systemd holds the pipe's other end until it unloads the unit, so
 	// the report ends where its JSON does. The helper has written it all.
@@ -143,17 +179,70 @@ func (s *Slots) Check(ctx context.Context, n int) error {
 		if why == "" && res.err != nil {
 			why = res.err.Error()
 		}
-		return fmt.Errorf("slot %d's exposure check failed with exit code %d: %s", n, code, why)
+		return fmt.Errorf("the exposure check failed with exit code %d: %s", code, why)
 	case len(res.report.Hits) > 0:
-		return &Exposed{exposure(n, res.report), res.report.Hits}
+		return &Exposed{exposure(res.report), res.report.Hits}
 	}
 	return nil
 }
 
-// checkUnit is the name of slot n's exposure check unit, unique by id.
-// It isn't a runner's, so Alive never names it.
-func (l Layout) checkUnit(n int, id string) string {
-	return fmt.Sprintf("%s-check-slot%d-%s.service", l.Name, n, id)
+// A flight runs one call at a time, and hands its result to every caller
+// that asked while it ran.
+type flight struct {
+	mu  sync.Mutex
+	run *flightRun
+}
+
+type flightRun struct {
+	done chan struct{}
+	err  error
+	// joined counts the callers that wait for this run besides the one
+	// that started it.
+	joined int
+}
+
+// joined returns how many callers wait for the run under way besides the
+// one that started it.
+func (f *flight) joined() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.run == nil {
+		return 0
+	}
+	return f.run.joined
+}
+
+// do runs fn, or, if a call of do runs it already, waits for that one's
+// result, until ctx ends. fn runs to its end even if ctx ends first.
+func (f *flight) do(ctx context.Context, fn func() error) error {
+	f.mu.Lock()
+	r := f.run
+	if r != nil {
+		r.joined++
+	} else {
+		r = &flightRun{done: make(chan struct{})}
+		f.run = r
+		go func() {
+			r.err = fn()
+			f.mu.Lock()
+			f.run = nil
+			f.mu.Unlock()
+			close(r.done)
+		}()
+	}
+	f.mu.Unlock()
+	select {
+	case <-r.done:
+		return r.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// checkUnit is the name of an exposure check's unit, unique by id. It
+// isn't a runner's, so Alive never names it.
+func (l Layout) checkUnit(id string) string {
+	return fmt.Sprintf("%s-check-%s.service", l.Name, id)
 }
 
 // exposable returns the paths the read check probes, sorted: what's
@@ -173,8 +262,8 @@ func (v view) exposable() []string {
 }
 
 // CheckMode is the hidden argument that runs silkpool as the exposure
-// check, `silkpool check-exposure <path>...`, which the agent runs as a
-// slot account in a unit with its runners' sandbox.
+// check, `silkpool check-exposure <path>...`, which the agent runs as the
+// service account in a unit with the runners' sandbox.
 const CheckMode = "check-exposure"
 
 // writeRoots are the folders of the OS's software that a later job's
@@ -193,13 +282,14 @@ type report struct {
 	Error string `json:"error,omitempty"`
 }
 
-// A hit is something a slot can read, or change, that it mustn't.
+// A hit is something the service account can read, or change, that it
+// mustn't.
 type hit struct {
 	Path   string `json:"path"`
 	Change bool   `json:"change,omitempty"`
 }
 
-// checkExposure is the exposure check's helper. Running as the slot
+// checkExposure is the exposure check's helper. Running as the service
 // account in its unit, it probes paths for the read check, walks
 // writeRoots for the write check, and writes its report to out as JSON.
 func checkExposure(paths []string, out io.Writer) int {
@@ -336,12 +426,12 @@ func under(path, dir string) bool {
 // exposure is the detail of a check that found the hits in r: the first,
 // with its fix, and how many more it found. The path is the machine's,
 // so it's scrubbed.
-func exposure(n int, r report) string {
+func exposure(r report) string {
 	h := r.Hits[0]
 	p := quote(secret.Scrub(h.Path))
-	d := fmt.Sprintf("%s can be read by slot %d's account: take away other accounts' access with chmod o-rwx %s", p, n, p)
+	d := fmt.Sprintf("%s can be read by Silkpool's service account: take away other accounts' access with chmod o-rwx %s", p, p)
 	if h.Change {
-		d = fmt.Sprintf("%s can be changed by slot %d's account: take away other accounts' write access with chmod o-w %s", p, n, p)
+		d = fmt.Sprintf("%s can be changed by Silkpool's service account: take away other accounts' write access with chmod o-w %s", p, p)
 	}
 	switch more := len(r.Hits) - 1; {
 	case r.More:

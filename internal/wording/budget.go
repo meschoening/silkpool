@@ -65,7 +65,8 @@ func BudgetSet(c node.AppliedCommand, name string) string {
 }
 
 // OutOfMemory is the line a job's entry adds when the OS ended one of
-// its processes because memory ran out, or "" if it didn't: "Ran out of
+// its processes because memory ran out, or, on Windows, failed one's
+// commit past the budget, or "" if it didn't: "Ran out of
 // build-server's 4 GB memory budget", or, with no budget, "The OS ended a
 // process because build-server ran out of memory". name is the node's
 // machine's name.

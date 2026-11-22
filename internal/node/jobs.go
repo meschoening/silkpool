@@ -31,7 +31,8 @@ type Job struct {
 	// if it's a run of the node's target. Otherwise it's zero.
 	Run Run
 	// OutOfMemory reports that the OS ended a process of the job's runner
-	// because memory ran out, and MemoryBudget is the memory budget in
+	// because memory ran out, or, on Windows, failed one's commit past the
+	// memory budget, and MemoryBudget is the memory budget in
 	// force then, in bytes: what the slots ran out of, or 0 if they had
 	// none and the machine ran out. Because the budget is shared, the
 	// process may not have been the one using the most.
@@ -145,10 +146,13 @@ func validName(name, extra string) bool {
 // jobEnded keeps the job s's runner held, which has just ended, until
 // the slot's reset has copied the runner's logs. A job whose listener
 // reported its result finished, even if Emergency stop came after; one
-// Emergency stop cancelled before that was cancelled; and otherwise a
-// listener that exited cleanly finished its job, and one that didn't, or
-// was found dead, interrupted it.
-func (a *applying) jobEnded(s *Slot, clean bool) {
+// Emergency stop cancelled before that was cancelled; and any other was
+// interrupted, however the listener exited. The listener reports a
+// result for every job its Worker ran, cancelled ones too. It exits
+// cleanly without one when it gives up on handing the job to a Worker,
+// which it kills, and GitHub then fails the job when its lease runs out
+// (#285).
+func (a *applying) jobEnded(s *Slot) {
 	r := s.Runner
 	j := Job{Name: r.Job, Slot: s.Number, Runner: r.Name, Started: r.JobSince, Ended: a.now, Result: r.Result}
 	switch {
@@ -156,8 +160,6 @@ func (a *applying) jobEnded(s *Slot, clean bool) {
 		j.Outcome = JobFinished
 	case r.Retirement == Cancelling:
 		j.Outcome = JobCancelled
-	case clean:
-		j.Outcome = JobFinished
 	default:
 		j.Outcome = JobInterrupted
 	}

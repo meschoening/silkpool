@@ -1,6 +1,9 @@
 # Builds a Silkpool release when its tag is pushed, from the source at
-# that tag: the node's and the Hub's .deb and .rpm packages for amd64 and
-# arm64, and install.sh, with packaging/build, then SHA256SUMS over them.
+# that tag. The macOS job builds the macOS node's .pkg on a Mac, signed
+# and notarized. Then the release job builds the node's and the Hub's
+# .deb and .rpm packages for amd64 and arm64, install.sh, the Windows
+# node's zips for amd64 and arm64 and install.ps1, with packaging/build,
+# takes the .pkg from the macOS job, and writes SHA256SUMS over them all.
 # They go on a draft release, whose files are checked before it's
 # published. A rerun replaces the draft's files.
 name: Release
@@ -21,8 +24,10 @@ defaults:
 
 jobs:
   release:
+    # The draft holds every OS's files, so it waits for the .pkg.
+    needs: macos
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: write # to make the draft release and attach its files
     steps:
@@ -37,8 +42,14 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Build the packages and install.sh
+      - name: Build the packages, install.sh, the zips and install.ps1
         run: go run ./packaging/build -version "${GITHUB_REF_NAME#v}" -out dist
+
+      # The macOS job's signed and notarized .pkg, beside them.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pkg
+          path: dist
 
       # One line per file, by bare name, in the C locale's order, as
       # sha256sum prints it. install.sh checks each package against it.
@@ -57,6 +68,12 @@ jobs:
           version=${tag#v}
           repo=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY
           notes="Silkpool $version. Install or upgrade it with [the operator docs]($repo/tree/$tag/docs#readme) as they stood for this release. \`SHA256SUMS\` lists every file's SHA-256. Built from [the source at $tag]($repo/tree/$tag) by [this run]($repo/actions/runs/$GITHUB_RUN_ID)."
+          # Silkpool's Windows programs are unsigned, and Defender can
+          # quarantine them, so a release that holds them says what the
+          # docs give for that.
+          if compgen -G 'dist/*_windows_*.zip' >/dev/null; then
+            notes+=" On Windows, add [Microsoft Defender's exclusions]($repo/blob/$tag/docs/windows-defender.md) before you install: Defender can mistake Silkpool's unsigned programs for malware and quarantine them."
+          fi
           draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || true)
           case $draft in
             true)
@@ -72,3 +89,251 @@ jobs:
               gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" "${args[@]}"
               ;;
           esac
+
+  # The macOS .pkg, for Apple silicon: its code signed with the Developer
+  # ID Application identity under the hardened runtime, the .pkg signed
+  # with the Developer ID Installer identity, notarized with an App Store
+  # Connect API key, stapled, and checked as Gatekeeper checks it.
+  #
+  # The .pkg reaches the release job as the artifact pkg, which joins it
+  # to the draft and SHA256SUMS. The job writes nothing to the release
+  # itself.
+  #
+  # The secrets it reads, every one required:
+  #   APPLE_CERTIFICATE                     base64 of the Developer ID Application .p12
+  #   APPLE_CERTIFICATE_PASSWORD            that .p12's export password
+  #   APPLE_SIGNING_IDENTITY                "Developer ID Application: <name> (<team ID>)"
+  #   APPLE_INSTALLER_CERTIFICATE           base64 of the Developer ID Installer .p12
+  #   APPLE_INSTALLER_CERTIFICATE_PASSWORD  that .p12's export password
+  #   APPLE_INSTALLER_SIGNING_IDENTITY      "Developer ID Installer: <name> (<team ID>)"
+  #   APPLE_API_KEY                         base64 of the API key's AuthKey_<key ID>.p8
+  #   APPLE_API_KEY_ID                      that key's ID
+  #   APPLE_API_ISSUER                      the team's issuer ID
+  #
+  # A secret reaches a script only through env, and no step prints one.
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      # Every one, before anything is built: a release never ships a .pkg
+      # that isn't signed and notarized.
+      - name: Check the signing secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_INSTALLER_CERTIFICATE APPLE_INSTALLER_CERTIFICATE_PASSWORD APPLE_INSTALLER_SIGNING_IDENTITY \
+            APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [[ -z ${!name} ]]; then missing+=("$name"); fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::These secrets aren't set, and the .pkg is never shipped unsigned: ${missing[*]}"
+            exit 1
+          fi
+          if [[ $APPLE_SIGNING_IDENTITY != "Developer ID Application: "*" ("*")" ]]; then
+            echo "::error::APPLE_SIGNING_IDENTITY isn't a Developer ID Application identity's name"
+            exit 1
+          fi
+          if [[ $APPLE_INSTALLER_SIGNING_IDENTITY != "Developer ID Installer: "*" ("*")" ]]; then
+            echo "::error::APPLE_INSTALLER_SIGNING_IDENTITY isn't a Developer ID Installer identity's name"
+            exit 1
+          fi
+          # Login Items lists the agent and the tray app under Silkpool.app
+          # only if one team signs everything.
+          if [[ ${APPLE_SIGNING_IDENTITY##*(} != "${APPLE_INSTALLER_SIGNING_IDENTITY##*(}" ]]; then
+            echo "::error::APPLE_SIGNING_IDENTITY and APPLE_INSTALLER_SIGNING_IDENTITY name different teams"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # pkg/root holds what the .pkg installs, as ADR 0013 lays it out
+      # (usr/local/bin/silkpool, Applications/Silkpool.app and the launchd
+      # plists), and pkg/scripts its preinstall and postinstall. Both
+      # binaries are built here from the tag's source, the tray app with
+      # cgo against Xcode's macOS SDK.
+      - name: Stage the .pkg's payload
+        run: go run ./packaging/macos/stage -version "${GITHUB_REF_NAME#v}" -out pkg
+
+      # A keychain of the run's own, which the last step deletes. Its
+      # password is random and lives only in this step.
+      - name: Make the run's keychain
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+        run: |
+          umask 077
+          keychain=$RUNNER_TEMP/signing.keychain-db
+          password=$(openssl rand -hex 32)
+          trap 'rm -f "$RUNNER_TEMP/application.p12" "$RUNNER_TEMP/installer.p12"' EXIT
+          echo "SIGNING_KEYCHAIN=$keychain" >>"$GITHUB_ENV"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          # openssl rather than base64, since it reads the one unwrapped
+          # line gh secret set stores the same way in every macOS.
+          printf '%s' "$APPLE_CERTIFICATE" | openssl base64 -d -A >"$RUNNER_TEMP/application.p12"
+          printf '%s' "$APPLE_INSTALLER_CERTIFICATE" | openssl base64 -d -A >"$RUNNER_TEMP/installer.p12"
+          security import "$RUNNER_TEMP/application.p12" -k "$keychain" -f pkcs12 \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security import "$RUNNER_TEMP/installer.p12" -k "$keychain" -f pkcs12 \
+            -P "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" -T /usr/bin/productbuild >/dev/null
+          # Lets codesign and productbuild use the keys without the prompt
+          # nobody is there to answer.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          # codesign and productbuild look for an identity only in the
+          # keychains on the search list, whatever --keychain says. This
+          # runs in bash 3.2 too, so no mapfile.
+          others=()
+          while read -r listed; do
+            listed=${listed#\"}
+            listed=${listed%\"}
+            if [[ $listed != "$keychain" ]]; then others+=("$listed"); fi
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${others[@]}"
+          # A .p12 can hold another identity, or a certificate without its
+          # key, which is no identity at all.
+          identities=$(security find-identity "$keychain")
+          for name in APPLE_SIGNING_IDENTITY APPLE_INSTALLER_SIGNING_IDENTITY; do
+            if ! grep -qF "\"${!name}\"" <<<"$identities"; then
+              echo "::error::The keychain holds no identity named as $name says: its .p12 holds another, or lacks the private key"
+              exit 1
+            fi
+          done
+
+      # Inner code first: the agent's binary, then the tray app, whose
+      # signature seals the bundle. --force replaces the ad hoc signature
+      # Go's linker gives every darwin/arm64 binary.
+      - name: Sign the node's code
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          for code in pkg/root/usr/local/bin/silkpool pkg/root/Applications/Silkpool.app; do
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" --keychain "$SIGNING_KEYCHAIN" \
+              --options runtime --timestamp "$code"
+            codesign --verify --strict --verbose=2 "$code"
+          done
+
+      - name: Build and sign the .pkg
+        env:
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          mkdir -p dist
+          # Each bundle installs where the payload puts it, and not over a
+          # copy found moved elsewhere, as pkgbuild would by default.
+          components=$RUNNER_TEMP/components.plist
+          pkgbuild --analyze --root pkg/root "$components"
+          i=0
+          while plutil -extract "$i" xml1 -o /dev/null "$components" >/dev/null 2>&1; do
+            plutil -replace "$i.BundleIsRelocatable" -bool NO "$components"
+            i=$((i + 1))
+          done
+          pkgbuild --root pkg/root --component-plist "$components" --scripts pkg/scripts \
+            --identifier io.github.meschoening.silkpool --version "$version" --install-location / \
+            "$RUNNER_TEMP/silkpool.pkg"
+          productbuild --package "$RUNNER_TEMP/silkpool.pkg" --sign "$APPLE_INSTALLER_SIGNING_IDENTITY" \
+            --keychain "$SIGNING_KEYCHAIN" --timestamp "dist/silkpool_${version}_arm64.pkg"
+
+      # Anything but Accepted fails the job, with Apple's log of why.
+      - name: Notarize and staple the .pkg
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          pkg=dist/silkpool_${GITHUB_REF_NAME#v}_arm64.pkg
+          # notarytool reads the key from a file, which goes when the step does.
+          key=$RUNNER_TEMP/AuthKey.p8
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s' "$APPLE_API_KEY" | openssl base64 -d -A >"$key")
+          auth=(--key "$key" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
+          exit_code=0
+          result=$(xcrun notarytool submit "$pkg" "${auth[@]}" --wait --timeout 45m --output-format json) || exit_code=$?
+          id=$(jq -r '.id // empty' <<<"$result" 2>/dev/null || true)
+          status=$(jq -r '.status // empty' <<<"$result" 2>/dev/null || true)
+          if [[ $status != Accepted ]]; then
+            echo "::error::Apple's notary service answered ${status:-nothing} for $pkg (notarytool exited $exit_code)"
+            if [[ -n $id ]]; then xcrun notarytool log "$id" "${auth[@]}" || true; fi
+            exit 1
+          fi
+          echo "Notarized as submission $id"
+          xcrun stapler staple "$pkg"
+          xcrun stapler validate "$pkg"
+
+      - name: Check the .pkg as Gatekeeper does
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+        run: |
+          pkg=dist/silkpool_${GITHUB_REF_NAME#v}_arm64.pkg
+          # Each answer is read whole first: grep -q stops reading at its
+          # match, which can fail the writer under pipefail.
+          signature=$(pkgutil --check-signature "$pkg")
+          if ! grep -qF "$APPLE_INSTALLER_SIGNING_IDENTITY" <<<"$signature"; then
+            echo "::error::$pkg isn't signed by APPLE_INSTALLER_SIGNING_IDENTITY"
+            exit 1
+          fi
+          if ! assessment=$(spctl --assess --type install --verbose=2 "$pkg" 2>&1) ||
+            ! grep -qx 'source=Notarized Developer ID' <<<"$assessment"; then
+            echo "::error::Gatekeeper doesn't accept $pkg as notarized Developer ID software"
+            exit 1
+          fi
+          expanded=$RUNNER_TEMP/expanded
+          pkgutil --expand-full "$pkg" "$expanded"
+          for code in usr/local/bin/silkpool Applications/Silkpool.app; do
+            path=$expanded/silkpool.pkg/Payload/$code
+            codesign --verify --strict --verbose=2 "$path"
+            details=$(codesign --display --verbose=2 "$path" 2>&1)
+            if ! grep -qxF "Authority=$APPLE_SIGNING_IDENTITY" <<<"$details"; then
+              echo "::error::$code in $pkg isn't signed by APPLE_SIGNING_IDENTITY"
+              exit 1
+            fi
+            if ! grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime' <<<"$details"; then
+              echo "::error::$code in $pkg doesn't run under the hardened runtime"
+              exit 1
+            fi
+            if ! grep -q '^Timestamp=' <<<"$details"; then
+              echo "::error::$code in $pkg has no secure timestamp"
+              exit 1
+            fi
+          done
+
+      # For the release job, which needs this one. A rerun of this job
+      # replaces it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pkg
+          path: dist/silkpool_*_arm64.pkg
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Delete the run's keychain
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/application.p12" "$RUNNER_TEMP/installer.p12" "$RUNNER_TEMP/AuthKey.p8"
+          if [[ -n ${SIGNING_KEYCHAIN:-} && -e $SIGNING_KEYCHAIN ]]; then
+            security delete-keychain "$SIGNING_KEYCHAIN"
+          fi

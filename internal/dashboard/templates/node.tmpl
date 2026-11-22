@@ -114,7 +114,7 @@
 {{/* Removing the node from the Hub, behind its confirmation, which says what happens to a connected node and to one that isn't. */}}
 {{define "node-remove"}}<div class="box" id="node-remove">
 {{- if .Removing}}
-<p class="meta">Being removed. It leaves the Hub once it's drained and its slot accounts are deleted.</p>
+<p class="meta">Being removed. It leaves the Hub once it's drained and its slots are reset.</p>
 {{- else if eq .Confirm "remove"}}
 <div class="cf"><p>{{.RemoveConfirm}}</p><form class="btns" method="post" action="{{.Node.Post}}/remove"><a class="btn" href="{{.Node.Post}}">Cancel</a><button class="btn is-primary">Remove {{.Node.Name}}</button></form></div>
 {{- else}}

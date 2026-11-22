@@ -8,6 +8,7 @@ import (
 
 	"github.com/meschoening/silkpool/internal/diagnostics"
 	"github.com/meschoening/silkpool/internal/store"
+	"github.com/meschoening/silkpool/internal/zone"
 )
 
 // The diagnostics report's words, which the node CLI prints and the
@@ -27,9 +28,9 @@ type Part struct {
 // LogHeading.
 func Diagnostics(r diagnostics.Report) []Part {
 	m := r.Machine
-	return []Part{
+	parts := []Part{
 		{"Agent", []string{m.AgentVersion}},
-		{"Machine", []string{fmt.Sprintf("%s · %s · %s · %s", m.Hostname, m.OSVersion, Arch(m.Arch), m.Zone)}},
+		{"Machine", []string{fmt.Sprintf("%s · %s · %s · %s", m.Hostname, m.OSVersion, Arch(m.Arch), machineZone(m.Zone))}},
 		{"Time", []string{r.At}},
 		{"Runner app", runnerApp(r.RunnerApp)},
 		{"Slots", slotLines(r.Slots)},
@@ -38,6 +39,11 @@ func Diagnostics(r diagnostics.Report) []Part {
 		{"Free disk", []string{freeDisk(r.FreeDisk)}},
 		{"Clock", []string{clock(r.Clock)}},
 	}
+	// Only a Windows node reads its PowerShells.
+	if len(r.PowerShell) > 0 {
+		parts = append(parts, Part{"PowerShell", powerShell(r.PowerShell)})
+	}
+	return parts
 }
 
 // LogHeading heads the end of the agent's own log, of lines lines: "The
@@ -127,6 +133,19 @@ func slotLines(slots []store.Slot) []string {
 		return []string{"none"}
 	}
 	return lines
+}
+
+// machineZone is the machine's zone as its agent read it from the OS,
+// and, if it found none or one that doesn't load, Central, which the
+// node falls back on.
+func machineZone(name string) string {
+	switch _, ok := zone.Load(name); {
+	case ok:
+		return name
+	case name == "" || name == "Local":
+		return "no time zone found, so " + zone.DefaultName
+	}
+	return name + ", which doesn't load, so " + zone.DefaultName
 }
 
 // exposure is each slot's latest exposure check.

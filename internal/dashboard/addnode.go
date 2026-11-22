@@ -14,8 +14,10 @@ import (
 // "Make a code" shows the code, single use, with its expiry, and per OS
 // the one command that installs Silkpool, pinned to the Hub's version,
 // and enrolls with it, then the plain enroll for a machine that has
-// Silkpool already. The page waits, live, until a machine uses the code.
-// Below, the other codes, with Revoke for the open ones.
+// Silkpool already. An OS the release has no installers for keeps its
+// tab, which says so in place of the commands. The page waits, live,
+// until a machine uses the code. Below, the other codes, with Revoke
+// for the open ones.
 //
 // The Hub gives a code's text out once, when it's made: the session that
 // made it keeps it in memory, and shows it on this page while the code
@@ -29,8 +31,11 @@ type addNodePage struct {
 	// OS is the tab open, by its runner label, and Tabs every tab.
 	OS   string
 	Tabs []osTab
-	// Install and Enroll are the made code's commands for OS.
+	// Install and Enroll are the made code's commands for OS, or NotYet
+	// what stands in for them while the release has no installers for
+	// it.
 	Install, Enroll wording.EnrollCommand
+	NotYet          string
 	// Others are the Hub's other codes, newest first.
 	Others  []codeRow
 	Refusal string
@@ -104,7 +109,11 @@ func (d *Dashboard) addNodePage(codes []hubops.Code, version string, made madeCo
 		if code.ID == made.id {
 			text := made.text.Reveal()
 			p.Made = &madeView{ID: code.ID, Text: text, State: code.State, Expires: c.When(code.Expires), Node: code.Node, NodePath: nodePath(code.Node)}
-			p.Install, p.Enroll = wording.Install(p.OS, version, text), wording.Enroll(p.OS, text)
+			if install, ok := d.installers.Install(p.OS, version, text); ok {
+				p.Install, p.Enroll = install, d.installers.Enroll(p.OS, text)
+			} else {
+				p.NotYet = d.installers.NotYet(p.OS)
+			}
 			continue
 		}
 		p.Others = append(p.Others, codeRow{

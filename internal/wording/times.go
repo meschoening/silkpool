@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/meschoening/silkpool/internal/availability"
+	"github.com/meschoening/silkpool/internal/zone"
 )
 
 // Clock is the clock and its zone that a surface prints times in: the
@@ -19,18 +20,21 @@ type Clock struct {
 	Own string
 }
 
+// zone is the zone times print in: Zone, or Central, Silkpool's
+// default, if it has none.
 func (c Clock) zone() *time.Location {
 	if c.Zone == nil {
-		return time.UTC
+		return zone.Default()
 	}
 	return c.Zone
 }
 
 // TimeOfDay is t's time of day, "7:30 AM".
 func (c Clock) TimeOfDay(t time.Time) string {
-	t = t.In(c.zone())
+	z := c.zone()
+	t = t.In(z)
 	s := t.Format("3:04 PM")
-	if c.Zone != nil && c.Zone.String() != c.Own {
+	if z.String() != c.Own {
 		s += " " + t.Format("MST")
 	}
 	return s
@@ -136,14 +140,22 @@ func plural(n int, noun string) string {
 
 // list joins words as a sentence lists them: "a", "a and b", "a, b and
 // c".
-func list(words []string) string {
+func list(words []string) string { return join(words, "and") }
+
+// either joins words as a sentence lists alternatives: "a", "a or b",
+// "a, b or c".
+func either(words []string) string { return join(words, "or") }
+
+// join joins words as a sentence lists them, with the conjunction and
+// before the last.
+func join(words []string, and string) string {
 	switch len(words) {
 	case 0:
 		return ""
 	case 1:
 		return words[0]
 	}
-	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
+	return strings.Join(words[:len(words)-1], ", ") + " " + and + " " + words[len(words)-1]
 }
 
 // Sentence makes s a sentence: its first letter upper case, ending in a

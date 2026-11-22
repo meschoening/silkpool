@@ -1,10 +1,11 @@
 // Package runnerinstall is the agent's I/O for the runner application on
-// Linux: it downloads a version's package from GitHub, checks it against
-// the SHA-256 the Hub sent, installs it in the agent's root-only state,
-// and builds each runner's root from links to an install. The decision
-// behind it is "Define how the agent installs, verifies and updates the
-// runner application", recorded as
-// ADR 0011.
+// Linux, macOS and Windows: it downloads a version's package from
+// GitHub, checks it against the SHA-256 the Hub sent, installs it in the
+// agent's state, where only root or SYSTEM can reach it, and builds each
+// runner's root from links to an install: hardlinks on Linux and
+// Windows, APFS clones on macOS. The decision behind it is "Define how
+// the agent installs, verifies and updates the runner application",
+// recorded as ADR 0011.
 //
 // It carries out package node's effects and answers with its events:
 // InstallRunnerApp becomes Install, which answers InstallReady or
@@ -36,11 +37,14 @@ import (
 
 // Installs are a node's installs of the runner application, one folder
 // per version, in a folder of the agent's state that only root can
-// read, such as /var/lib/silkpool/runner. Slots never see it: each
-// runner reaches its install only through the links in its own root.
+// read, such as /var/lib/silkpool/runner, or on Windows only SYSTEM can
+// use. Slots never see it: each runner reaches its install only through
+// the links in its own root.
 //
 // The folder must be on the same filesystem as the slots' folders, so
-// that their roots can be hardlinked to an install. Installs owns
+// that their roots can be linked to an install: hardlinked on Linux and
+// Windows, where a file NTFS won't link is copied, and cloned on macOS,
+// where it must be an APFS volume. Installs owns
 // everything in it: a folder named for a version is a complete, verified
 // install, and anything else is what an install left when the agent
 // stopped part-way.
@@ -50,10 +54,17 @@ import (
 type Installs struct {
 	// Dir is the folder.
 	Dir string
-	// Platform is the node's platform: linux-x64 or linux-arm64.
+	// Platform is the node's platform: linux-x64, linux-arm64 or
+	// osx-arm64, or on Windows win-x64 or win-arm64.
 	Platform runnerapp.Platform
 	// Client downloads the packages, or nil for http.DefaultClient.
 	Client *http.Client
+	// Account is the SID of the machine's Silkpool service account,
+	// which every slot's runner runs as, such as
+	// S-1-5-21-1004336348-1177238915-682003330-1001: on Windows only,
+	// where the install's files let it read and run them, and each
+	// runner's root is its. Linux and macOS name the account to Link.
+	Account string
 }
 
 // MaxInstalls is how many installs a node keeps at most: the one new
@@ -90,13 +101,11 @@ func (i Installs) install(ctx context.Context, app node.InstallRunnerApp) error 
 	if !runnerapp.Valid(app.Version) {
 		return fmt.Errorf("%q isn't a version of the runner application", app.Version)
 	}
-	if i.Platform != runnerapp.LinuxX64 && i.Platform != runnerapp.LinuxARM64 {
-		return fmt.Errorf("installing the runner application on %s isn't supported yet", i.Platform)
+	unpack, err := i.extractor()
+	if err != nil {
+		return err
 	}
-	if err := os.MkdirAll(i.Dir, 0o700); err != nil {
-		return failure(err)
-	}
-	if err := os.Chmod(i.Dir, 0o700); err != nil {
+	if err := i.prepare(); err != nil {
 		return failure(err)
 	}
 	installed, _, err := i.list()
@@ -118,51 +127,15 @@ func (i Installs) install(ctx context.Context, app node.InstallRunnerApp) error 
 	if err != nil {
 		return failure(err)
 	}
-	if err := extract(pkg, tmp); err != nil {
+	if err := unpack(pkg, tmp); err != nil {
 		os.RemoveAll(tmp)
 		return err
 	}
-	if err := finish(tmp, i.path(app.Version)); err != nil {
+	if err := i.finish(tmp, i.path(app.Version)); err != nil {
 		os.RemoveAll(tmp)
 		return failure(err)
 	}
 	return nil
-}
-
-// finish renames the extracted install tmp to install. Everything in it
-// reaches the disk first, so that even a power cut can't leave an install
-// that looks usable but isn't.
-func finish(tmp, install string) error {
-	if err := os.Chmod(tmp, 0o755); err != nil {
-		return err
-	}
-	err := filepath.WalkDir(tmp, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.Type()&fs.ModeSymlink != 0 {
-			return err
-		}
-		return syncPath(path)
-	})
-	if err != nil {
-		return err
-	}
-	beforeRename(tmp)
-	if err := os.Rename(tmp, install); err != nil {
-		return err
-	}
-	return syncPath(filepath.Dir(install))
-}
-
-// syncPath flushes the file or folder at path to the disk.
-func syncPath(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	err = f.Sync()
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	return err
 }
 
 // beforeRename runs with each finished extraction's folder, just before
@@ -294,6 +267,17 @@ func (i Installs) list() (installed, leftovers []string, err error) {
 
 // path returns where the install of version is.
 func (i Installs) path(version string) string { return filepath.Join(i.Dir, version) }
+
+// entryFailed describes err, which extracting the package's entry name
+// met, or returns nil.
+func entryFailed(name string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("couldn't extract %q from its package: %w", name, err)
+}
+
+func damaged(err error) error { return fmt.Errorf("its package is damaged: %w", err) }
 
 // failure describes a local failure for the update notice.
 func failure(err error) error {

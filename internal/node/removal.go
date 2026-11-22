@@ -41,8 +41,8 @@ func (a *applying) startRemoval() {
 	}
 }
 
-// wipe wipes the node once its removal is done: every slot's account is
-// deleted and the node may wipe. It may with Force, once it has heard
+// wipe wipes the node once its removal is done: every slot is deleted
+// and the node may wipe. It may with Force, once it has heard
 // "removed", or while connected once the Hub has stored its outbox, in
 // which case it also confirms.
 func (a *applying) wipe() {

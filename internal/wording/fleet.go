@@ -3,6 +3,8 @@ package wording
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/meschoening/silkpool/internal/availability"
@@ -176,16 +178,19 @@ type Verb struct {
 // its resume time instead, while paused.
 func (v View) Verbs() []Verb {
 	a := v.Node.Availability
-	next := v.Clock.When(a.AutoResume.Next(v.Clock.Now))
+	// The resume time is read only while auto-resume is on: a node whose
+	// auto-resume was never set, as a new install's is until enrollment,
+	// has no zone, which Next panics on (#286).
+	next := func() string { return v.Clock.When(a.AutoResume.Next(v.Clock.Now)) }
 	switch {
 	case a.Intent == availability.OnDuty && a.AutoResume.On:
-		return []Verb{{"pause", "Pause until " + next, true}, {"pause-indefinitely", "Pause indefinitely", false}}
+		return []Verb{{"pause", "Pause until " + next(), true}, {"pause-indefinitely", "Pause indefinitely", false}}
 	case a.Intent == availability.OnDuty:
 		return []Verb{{"pause-indefinitely", "Pause", true}}
 	case a.Intent == availability.Paused:
 		return []Verb{{"resume", "Resume now", true}, {"pause-indefinitely", "Pause indefinitely", false}}
 	case a.AutoResume.On:
-		return []Verb{{"resume", "Resume now", true}, {"pause", "Resume at " + next + " instead", false}}
+		return []Verb{{"resume", "Resume now", true}, {"pause", "Resume at " + next() + " instead", false}}
 	}
 	return []Verb{{"resume", "Resume now", true}}
 }
@@ -296,22 +301,41 @@ var where = map[string]string{
 	"windows": "In PowerShell, run as administrator",
 }
 
+// Installers are the OSes, by their runner labels, that a release has
+// installers for, so that Add node and code new offer their commands.
+type Installers []string
+
+// Shipped are the OSes this release has installers for, the one switch
+// that Add node and code new read. v0.1.0 shipped Linux nodes only;
+// "Ship the macOS and Windows installers in releases" added the others,
+// as their installers joined the release. A test in tools/release fails
+// if it names an OS whose installer a release doesn't publish, or leaves
+// out one whose installer it does.
+var Shipped = Installers{"linux", "macos", "windows"}
+
 // Install is the one command that installs Silkpool on a machine of os,
 // as runner labels name it, pinned to the Hub's version, and enrolls it
-// with code.
-func Install(os, version, code string) EnrollCommand {
-	if os == "windows" {
+// with code. It's false for an OS s has no installers for.
+func (s Installers) Install(os, version, code string) (EnrollCommand, bool) {
+	switch {
+	case !slices.Contains(s, os):
+		return EnrollCommand{}, false
+	case os == "windows":
 		return EnrollCommand{OSes: "Windows", Where: where[os],
-			Command: fmt.Sprintf("& ([scriptblock]::Create((irm %s%s/install.ps1))) -Code %s", releases, version, code)}
+			Command: fmt.Sprintf("& ([scriptblock]::Create((irm %s%s/install.ps1))) -Code %s", releases, version, code)}, true
 	}
 	return EnrollCommand{OSes: osNames[os], Where: where[os],
-		Command: fmt.Sprintf("curl -fsSL %s%s/install.sh | sudo sh -s -- %s", releases, version, code)}
+		Command: fmt.Sprintf("curl -fsSL %s%s/install.sh | sudo sh -s -- %s", releases, version, code)}, true
 }
 
 // Enroll is the command that enrolls a machine of os that has Silkpool
-// installed already, with code.
-func Enroll(os, code string) EnrollCommand {
-	for _, c := range EnrollCommands(code) {
+// installed already, with code, or none for an OS s has no installers
+// for.
+func (s Installers) Enroll(os, code string) EnrollCommand {
+	if !slices.Contains(s, os) {
+		return EnrollCommand{}
+	}
+	for _, c := range s.EnrollCommands(code) {
 		if (os == "windows") == (c.OSes == "Windows") {
 			c.Where = where[os]
 			return c
@@ -320,10 +344,41 @@ func Enroll(os, code string) EnrollCommand {
 	return EnrollCommand{}
 }
 
-// DraftPreview says what saving the auto-resume draft d would do.
+// Missing are the OSes, by their runner labels, that Silkpool's nodes
+// are built for and s has no installers for.
+func (s Installers) Missing() []string {
+	var missing []string
+	for _, os := range slices.Sorted(maps.Keys(osNames)) {
+		if !slices.Contains(s, os) {
+			missing = append(missing, os)
+		}
+	}
+	return missing
+}
+
+// NotYet stands in for the commands of oses, by their runner labels,
+// which s has no installers for: "Silkpool doesn't run nodes on macOS
+// yet. This release supports Linux nodes."
+func (s Installers) NotYet(oses ...string) string {
+	return fmt.Sprintf("Silkpool doesn't run nodes on %s yet. This release supports %s nodes.", either(names(oses)), list(names(s)))
+}
+
+// names are the names of oses, by their runner labels.
+func names(oses []string) []string {
+	var n []string
+	for _, os := range oses {
+		n = append(n, osNames[os])
+	}
+	return n
+}
+
+// DraftPreview says what saving the auto-resume draft d would do, or
+// nothing if d is on with no zone, which has no resume time to say.
 func (v View) DraftPreview(d availability.AutoResume) string {
 	a := v.Node.Availability
 	switch {
+	case d.On && d.Zone == nil:
+		return ""
 	case !d.On && a.Intent == availability.OnDuty:
 		return "Pausing now would pause until you resume it."
 	case !d.On && a.Intent == availability.Paused:

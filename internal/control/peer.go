@@ -2,19 +2,10 @@ package control
 
 import (
 	"errors"
-	"net"
 	"os/user"
 	"slices"
 	"strconv"
 )
-
-// errNoPeerCredentials fails the peer check on an OS whose control
-// channel isn't built yet.
-var errNoPeerCredentials = errors.New("control: this OS's control channel isn't built yet")
-
-// peerUID returns the uid of the process at the other end of c, from
-// the socket's peer credentials. Each OS's file sets it.
-var peerUID = func(net.Conn) (int, error) { return 0, errNoPeerCredentials }
 
 // An Account is the OS account a peer runs as, as the peer check sees
 // it.

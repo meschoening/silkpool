@@ -1,0 +1,78 @@
+{{/* The panel's page, from a page: variant A, "Flyout", of "Prototype the tray and menu-bar panel", top to bottom. While the tray can't read the agent, the head and the state say why, the footer says it checks again, and the parts between are empty and hidden. The window is transparent over the OS's material (Acrylic on Windows, vibrancy on macOS), which also rounds its corners, so the page draws no ground of its own. It loads the shared live-update script and the panel's own, from files, with no inline style or script. Each part is live. */}}
+{{define "page"}}<!doctype html>
+<html lang="en" data-os="{{.OS}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Silkpool</title>
+<link rel="stylesheet" href="/assets/silkpool.css">
+<link rel="stylesheet" href="/panel.css">
+<script src="/assets/live.js" defer></script>
+<script src="/panel.js" defer></script>
+</head>
+<body>
+<div class="pnl">
+{{template "panel-head" .}}
+{{template "panel-state" .}}
+{{template "panel-slots" .}}
+{{template "panel-auto-resume" .}}
+{{template "panel-actions" .}}
+{{template "panel-foot" .}}
+</div>
+</body>
+</html>
+{{end}}
+
+{{/* The header: the machine's name and OS version, and the state chip, or the dashed ring with why the tray can't read the agent. */}}
+{{define "panel-head"}}<header class="p-h" id="panel-head"><div class="p-id"><div class="nm">{{.Name}}</div><div class="meta">{{.OSVersion}}</div></div>{{with .Down}}<span class="chip is-lastknown" data-key="chip">{{template "glyph-key" (glyph "lastknown" 16)}}{{.State}}</span>{{else}}{{template "chip" .Node}}{{end}}</header>{{end}}
+
+{{/* The notices, when there are any, then the state sentence; or why the tray can't read the agent, and what that means. */}}
+{{define "panel-state"}}<section class="p-s stack" id="panel-state">
+{{- with .Down}}
+<div class="story" data-key="sentence">
+<p class="lead">{{.Lead}}</p>
+<p class="sub">{{.Sub}}</p>
+</div>
+{{- else}}
+{{- template "notices" .Node}}
+{{template "sentence" .Node}}
+{{- end}}
+</section>{{end}}
+
+{{/* Slots, with the slot-limit stepper, then a row per slot. While paused, free slots leave the list. */}}
+{{define "panel-slots"}}{{if .Down}}<section class="p-s" id="panel-slots" hidden></section>{{else}}<section class="p-s" id="panel-slots">
+<div class="row"><h2 class="h2">Slots</h2><form class="step" method="post" action="{{.Node.Post}}/slot-limit"><input type="hidden" name="revision" value="{{.Revision}}"><button name="limit" value="{{.Fewer}}" aria-label="Fewer slots"{{if or .Node.Locked (not .Fewer)}} disabled{{end}}>−</button><b>{{.Limit}}</b><button name="limit" value="{{.More}}" aria-label="More slots"{{if or .Node.Locked (not .More)}} disabled{{end}}>+</button></form></div>
+{{- if .Node.Rows}}
+{{template "slots" .Node}}
+{{- else}}
+<p class="meta">No slots are open while it's paused.</p>
+{{- end}}
+</section>{{end}}{{end}}
+
+{{/* Auto-resume, or its editor while it's open. */}}
+{{define "panel-auto-resume"}}{{if .Down}}<section class="p-s" id="panel-auto-resume" hidden></section>{{else}}<section class="p-s" id="panel-auto-resume">{{if .Editor}}{{template "auto-resume-editor" .Editor}}{{else}}{{template "auto-resume" .Node}}{{end}}</section>{{end}}{{end}}
+
+{{/* The verbs, the primary first, which wrap onto a second line where they don't fit; or Stop now's confirmation, naming the jobs it cancels. Then what came of the panel's last command, if it didn't apply. */}}
+{{define "panel-actions"}}{{if .Down}}<section class="p-s" id="panel-actions" hidden></section>{{else}}<section class="p-s" id="panel-actions">
+{{- if .Confirm}}
+<div class="cf"><p>{{.StopConfirm}}</p><form class="btns" method="post" action="{{.Node.Post}}/command"><input type="hidden" name="verb" value="stop"><a class="btn" href="{{.Node.Post}}">Keep running</a><button class="btn is-red">Stop and cancel</button></form></div>
+{{- else}}
+<form class="btns" method="post" action="{{.Node.Post}}/command"><input type="hidden" name="revision" value="{{.Revision}}">
+{{- range .Verbs}}<button class="btn{{if .Primary}} is-primary{{end}}" name="verb" value="{{.Kind}}"{{if $.Node.Locked}} disabled{{end}}>{{.Label}}</button>{{end -}}
+</form>
+{{- end}}
+{{- with .Said}}
+<p class="said amber" role="alert">{{.}}</p>
+{{- end}}
+</section>{{end}}{{end}}
+
+{{/* The footer: the Hub line, Stop now in red while jobs run, and the Hub's dashboard, which opens in the browser. While the Hub is offline, what that means follows. While the tray can't read the agent, the Hub line says whether it checks again. */}}
+{{define "panel-foot"}}<footer class="p-f" id="panel-foot">
+<div class="row"><span class="p-hub">{{.Hub}}</span>
+{{- if .Jobs}}{{if .Node.Locked}}<span class="lnk is-red is-off">Stop now…</span>{{else}}<a class="lnk is-red" href="{{.Node.Post}}?confirm=stop">Stop now…</a>{{end}}{{end}}
+{{- with .Dashboard}}<a class="lnk" href="{{.}}" target="_blank" rel="noreferrer">Dashboard ↗</a>{{end}}</div>
+{{- with .HubDetail}}
+<p class="meta">{{.}}</p>
+{{- end}}
+</footer>{{end}}

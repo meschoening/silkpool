@@ -7,7 +7,7 @@
 
 {{define "auto-resume-fields"}}<input type="hidden" name="time" value="{{.Time}}">{{range weekdays}}{{if $.Days.Has .Day}}<input type="hidden" name="days" value="{{.Day | printf "%d"}}">{{end}}{{end}}<input type="hidden" name="zone" value="{{zoneName .Zone}}">{{end}}
 
-{{/* The auto-resume editor, from an Editor: the switch, the time, the days, the zone, a preview of the draft, then Cancel or Save. */}}
+{{/* The auto-resume editor, from an Editor: the switch, the time, the days, the zone, a preview of the draft if it has one, then Cancel or Save. */}}
 {{define "auto-resume-editor"}}<form class="ed" method="post" action="{{.Post}}/auto-resume" data-key="auto-resume"><input type="hidden" name="revision" value="{{.Revision}}">
 <label class="row"><b class="h2">Auto-resume</b><input class="sw" type="checkbox" name="on" value="1"{{if .Draft.On}} checked{{end}}></label>
 <label class="ed-r"><span>Time</span><input class="inp" type="time" name="time" value="{{.Draft.Time}}" required></label>
@@ -18,6 +18,6 @@
 {{- $zone := zoneName .Draft.Zone}}
 {{- range .Zones}}<option{{if eq . $zone}} selected{{end}}>{{.}}</option>{{end -}}
 </select></label>
-<p class="meta">{{.Preview}}</p>
+{{with .Preview}}<p class="meta">{{.}}</p>{{end}}
 <div class="btns"><a class="btn" href="{{.Post}}">Cancel</a><button class="btn is-primary">Save</button></div>
 </form>{{end}}

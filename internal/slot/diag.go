@@ -8,15 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"time"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/meschoening/silkpool/internal/node"
 	"github.com/meschoening/silkpool/internal/secret"
@@ -46,33 +43,16 @@ const (
 // the job's log.
 var diagLog = regexp.MustCompile(`^(Runner|Worker)_[A-Za-z0-9_.-]{1,100}\.log$`)
 
-// copyLogs copies the _diag logs of slot n's last runner, as its record
-// names it, into the runner's folder in the agent's logs, beside its
-// listener's output (copyDiag), and returns the run its Worker log
-// names. uid is the slot account's, which must own each log. Then it
-// prunes the runners' folders, as of now. Without a recorded runner or
-// an account, there's nothing to copy.
-func (s *Slots) copyLogs(n, uid int, now time.Time) (node.Run, error) {
-	runner := s.recordedRunner(n)
-	if runner == "" || uid <= 0 {
-		return node.Run{}, nil
-	}
-	run, err := copyDiag(s.RunnerRoot(n), s.RunnerLogs(runner), uid, diagCap)
-	if err != nil {
-		return node.Run{}, err
-	}
-	return run, s.pruneLogs(now)
-}
-
 // copyDiag copies the logs in the _diag folder of the runner root root
 // into the folder dest, and returns the run the first Worker log names.
 // A job can write anything there, so it follows no link, from the runner
-// root down, and copies only plain files that uid owns, so that a link
-// to a file of root's can't pass as a log. Each copy keeps the end of its
-// log, at most limit bytes, with every secret in it scrubbed, and is
-// root's, mode 0600. Without a runner root or a _diag folder, it copies
+// root down, and copies only plain files that owner, the service
+// account, owns, so that a link to a file of the agent's can't pass as a
+// log (openLog). Each copy keeps the end of its log, at most limit
+// bytes, with every secret in it scrubbed, and is the agent's alone
+// (createCopy). Without a runner root or a _diag folder, it copies
 // nothing.
-func copyDiag(root, dest string, uid int, limit int64) (node.Run, error) {
+func copyDiag(root, dest string, owner logOwner, limit int64) (node.Run, error) {
 	diag, err := openDiag(root)
 	if diag == nil || err != nil {
 		return node.Run{}, err
@@ -95,7 +75,7 @@ func copyDiag(root, dest string, uid int, limit int64) (node.Run, error) {
 	}
 	var run node.Run
 	for _, name := range workers {
-		f, size, err := openLog(diag, name, uid)
+		f, size, err := openLog(diag, name, owner)
 		if err != nil {
 			return node.Run{}, err
 		}
@@ -108,7 +88,7 @@ func copyDiag(root, dest string, uid int, limit int64) (node.Run, error) {
 		}
 	}
 	for _, name := range slices.Concat(newest(runners), newest(workers)) {
-		if err := copyLog(diag, name, uid, dest, limit); err != nil {
+		if err := copyLog(diag, name, owner, dest, limit); err != nil {
 			return node.Run{}, fmt.Errorf("can't copy %s: %w", name, err)
 		}
 	}
@@ -118,62 +98,11 @@ func copyDiag(root, dest string, uid int, limit int64) (node.Run, error) {
 // newest returns the last diagFiles of the sorted names.
 func newest(names []string) []string { return names[max(0, len(names)-diagFiles):] }
 
-// openDiag opens the _diag folder in the runner root root, following no
-// link, or returns nil if either isn't there or isn't a folder.
-func openDiag(root string) (*os.File, error) {
-	dirFlags := unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
-	rfd, err := unix.Open(root, dirFlags, 0)
-	if notThere(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("can't open %s: %w", root, err)
-	}
-	defer unix.Close(rfd)
-	dfd, err := unix.Openat(rfd, "_diag", dirFlags, 0)
-	if notThere(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("can't open %s: %w", filepath.Join(root, "_diag"), err)
-	}
-	return os.NewFile(uintptr(dfd), filepath.Join(root, "_diag")), nil
-}
-
-// notThere reports whether err says a path is missing, a link or not a
-// folder: in a runner root, each is nothing to copy.
-func notThere(err error) bool {
-	return errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR)
-}
-
-// openLog opens the log name in the folder diag, following no link, and
-// returns it with its size, or nil if it isn't a plain file that uid
-// owns. A FIFO doesn't block it.
-func openLog(diag *os.File, name string, uid int) (*os.File, int64, error) {
-	fd, err := unix.Openat(int(diag.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
-	if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENXIO) {
-		return nil, 0, nil
-	}
-	if err != nil {
-		return nil, 0, err
-	}
-	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
-		unix.Close(fd)
-		return nil, 0, err
-	}
-	if st.Mode&unix.S_IFMT != unix.S_IFREG || int(st.Uid) != uid {
-		unix.Close(fd)
-		return nil, 0, nil
-	}
-	return os.NewFile(uintptr(fd), name), st.Size, nil
-}
-
 // copyLog copies the end of the log name in the folder diag, at most
 // limit bytes (readTail), if it's one to copy (openLog), into the folder
 // dest, under the same name.
-func copyLog(diag *os.File, name string, uid int, dest string, limit int64) error {
-	f, size, err := openLog(diag, name, uid)
+func copyLog(diag *os.File, name string, owner logOwner, dest string, limit int64) error {
+	f, size, err := openLog(diag, name, owner)
 	if f == nil || err != nil {
 		return err
 	}
@@ -185,7 +114,7 @@ func copyLog(diag *os.File, name string, uid int, dest string, limit int64) erro
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(filepath.Join(dest, name), os.O_WRONLY|os.O_CREATE|os.O_TRUNC|unix.O_NOFOLLOW, 0o600)
+	out, err := createCopy(filepath.Join(dest, name))
 	if err != nil {
 		return err
 	}
@@ -389,38 +318,4 @@ func folderSize(dir string) (int64, error) {
 		}
 	}
 	return size, nil
-}
-
-// recordedRunners returns the runners the slots' records name: those
-// started and not yet reset.
-func (s *Slots) recordedRunners() ([]string, error) {
-	recorded, err := s.Recorded()
-	if err != nil {
-		return nil, err
-	}
-	var runners []string
-	for _, n := range slices.Sorted(maps.Keys(recorded)) {
-		runners = append(runners, recorded[n])
-	}
-	return runners, nil
-}
-
-// Recorded returns, by slot, the runner each slot's record names: the
-// one Start last started there, until the slot's reset is done. A
-// restarted agent reads what the dead ones' logs say, and watches the
-// live ones again. With no slots' folder, there are none.
-func (s *Slots) Recorded() (map[int]string, error) {
-	slots, err := names(filepath.Join(s.Root, "slots"))
-	if err != nil {
-		return nil, err
-	}
-	recorded := map[int]string{}
-	for _, name := range slots {
-		if n, err := strconv.Atoi(name); err == nil && n > 0 {
-			if runner := s.recordedRunner(n); runner != "" {
-				recorded[n] = runner
-			}
-		}
-	}
-	return recorded, nil
 }

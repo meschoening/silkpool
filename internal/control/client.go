@@ -19,6 +19,11 @@ type Client struct {
 	c     net.Conn
 	r     *bufio.Scanner
 	Hello Hello
+	// Tray reports that the client is the tray app, so the commands it
+	// sends come from the tray, not the command line, in their origin.
+	// It names only the surface: the account is the one the peer check
+	// saw, whatever the client says.
+	Tray bool
 }
 
 // Hello is what the agent says when it admits a client: its version, and
@@ -35,15 +40,22 @@ var ErrNotRunning = errors.New("silkpool's service isn't running on this machine
 // ErrDropped fails a request whose connection ended before its answer.
 var ErrDropped = errors.New("the connection to the agent dropped")
 
-// NotServer fails a dial when the process listening at the socket isn't
-// running as the uid the agent runs as.
+// NotServer fails a dial when what's listening at the endpoint isn't
+// the agent's: a socket's peer not running as the uid the agent runs
+// as, or, on Windows, a pipe that isn't SYSTEM's, as Detail says.
 type NotServer struct {
 	Path string
 	UID  int
+	// Detail says why, in place of the uid, on an OS without uids.
+	Detail string
 }
 
 func (e NotServer) Error() string {
-	return fmt.Sprintf("something other than Silkpool's service is listening at %s (uid %d)", e.Path, e.UID)
+	why := e.Detail
+	if why == "" {
+		why = fmt.Sprintf("uid %d", e.UID)
+	}
+	return fmt.Sprintf("something other than Silkpool's service is listening at %s (%s)", e.Path, why)
 }
 
 // NotAdmin fails a dial the agent refused because the caller isn't an
@@ -54,26 +66,37 @@ func (e NotAdmin) Error() string {
 	return fmt.Sprintf("only administrators can use Silkpool on this machine, and %s isn't one", e.Account)
 }
 
-// Dial connects to the control channel at path. It accepts only a server
-// running as serverUID, which is root's 0 outside tests, and checks it
-// before it sends anything.
+// Dial connects to the control channel at path. It accepts only the
+// agent's server, which it checks before it sends anything: on Linux and
+// macOS, a socket whose peer runs as serverUID, which is root's 0
+// outside tests; on Windows, a pipe that's SYSTEM's.
 func Dial(ctx context.Context, path string, serverUID int) (*Client, error) {
-	var d net.Dialer
-	c, err := d.DialContext(ctx, "unix", path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
-			return nil, ErrNotRunning
-		}
-		return nil, fmt.Errorf("couldn't reach Silkpool's service at %s: %w", path, err)
+	return Dialer{}.Dial(ctx, path, serverUID)
+}
+
+// A Dialer connects to the control channel. Its zero value checks the
+// server through the OS's peer check, as Dial does.
+type Dialer struct {
+	// PeerUID returns the uid of the process at the other end of a
+	// connection, or is nil for the OS's peer check. Only tests set it,
+	// to run the channel's protocol over a Unix socket on Windows, whose
+	// own peer check is the named pipe's.
+	PeerUID func(net.Conn) (int, error)
+}
+
+// Dial connects to the control channel at path, as the package's Dial
+// does, or, with d's PeerUID, to a Unix socket whose peer it says runs as
+// serverUID.
+func (d Dialer) Dial(ctx context.Context, path string, serverUID int) (*Client, error) {
+	var c net.Conn
+	var err error
+	if d.PeerUID != nil {
+		c, err = dialByUID(ctx, path, serverUID, d.PeerUID)
+	} else {
+		c, err = dial(ctx, path, serverUID)
 	}
-	uid, err := peerUID(c)
 	if err != nil {
-		c.Close()
 		return nil, err
-	}
-	if uid != serverUID {
-		c.Close()
-		return nil, NotServer{Path: path, UID: uid}
 	}
 	client := &Client{c: c, r: newReader(c)}
 	m, err := client.receive(ctx)
@@ -91,6 +114,29 @@ func Dial(ctx context.Context, path string, serverUID int) (*Client, error) {
 	}
 	c.Close()
 	return nil, err
+}
+
+// dialByUID connects to the Unix socket at path, and accepts it only if
+// check says its peer runs as serverUID.
+func dialByUID(ctx context.Context, path string, serverUID int, check func(net.Conn) (int, error)) (net.Conn, error) {
+	var nd net.Dialer
+	c, err := nd.DialContext(ctx, "unix", path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
+			return nil, ErrNotRunning
+		}
+		return nil, fmt.Errorf("couldn't reach Silkpool's service at %s: %w", path, err)
+	}
+	uid, err := check(c)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	if uid != serverUID {
+		c.Close()
+		return nil, NotServer{Path: path, UID: uid}
+	}
+	return c, nil
 }
 
 // Close ends the connection.
@@ -112,6 +158,9 @@ func (c *Client) receive(ctx context.Context) (message, error) {
 
 // do sends a request and reads its answer, which must be of type want.
 func (c *Client) do(ctx context.Context, req message, want string) (message, error) {
+	if c.Tray {
+		req.Surface = surfaceTray
+	}
 	if err := write(c.c, req); err != nil {
 		return message{}, fmt.Errorf("%w: %w", ErrDropped, err)
 	}

@@ -1,0 +1,36 @@
+/* The tray panel's layout, on top of the shared token CSS (package ui's
+   silkpool.css): variant A, "Flyout", of "Prototype the tray and
+   menu-bar panel". Sections divided by hairlines, and a footer on a
+   faint fill. The window is transparent over the OS's material, Acrylic
+   on Windows and vibrancy on macOS, which also rounds its corners: 8 px
+   on Windows 11, which fixes them for flyouts, and 12 px on macOS. So
+   the page draws no ground, radius or shadow of its own. */
+
+html, body { background: transparent; }
+body { overflow: hidden; cursor: default; -webkit-user-select: none; user-select: none; }
+:root[data-os="mac"] { --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+:root[data-os="win"] { --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+
+/* Controls sit on the material, so they keep the OS's arrow, and inputs
+   take a translucent ground. */
+.pnl .btn, .pnl .lnk, .pnl .sw, .pnl .day, .pnl .step button { cursor: default; }
+.pnl .inp { background: var(--fill); }
+.pnl .ed select.inp { width: 100%; }
+
+.pnl { width: 100%; }
+.p-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 14px 14px 10px; }
+.p-id { min-width: 0; }
+.p-id .nm, .p-id .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-s { padding: 10px 14px 12px; border-top: 1px solid var(--hairline-2); }
+.p-s > .row + .sls, .p-s > .row + .meta { margin-top: 6px; }
+.p-f { padding: 9px 14px; border-top: 1px solid var(--hairline-2); background: var(--fill); font-size: 12px; color: var(--secondary); }
+.p-f .row { justify-content: flex-start; gap: 14px; min-height: 18px; }
+.p-hub { margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-f .meta { margin-top: 4px; }
+
+/* What came of the last command, if it didn't apply, under the verbs. */
+.said { margin-top: 8px; font-size: 12px; line-height: 16px; }
+
+/* While the tray can't read the agent, the parts between the state and
+   the footer are empty, and hidden. */
+.p-s[hidden] { display: none; }

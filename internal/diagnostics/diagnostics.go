@@ -18,6 +18,7 @@
 //   - the outbox's length and its oldest entry;
 //   - the free disk space;
 //   - the clock's offset from the Hub;
+//   - on Windows, the execution policy each PowerShell's scripts meet;
 //   - the last LogLines lines of the agent's own log.
 //
 // It never holds a copied runner log, because a job can write those, so
@@ -40,6 +41,7 @@ import (
 	"github.com/meschoening/silkpool/internal/node"
 	"github.com/meschoening/silkpool/internal/secret"
 	"github.com/meschoening/silkpool/internal/store"
+	"github.com/meschoening/silkpool/internal/winexecpolicy"
 )
 
 // ErrNotConnected refuses an ask for the report of a node that isn't
@@ -77,6 +79,9 @@ type Report struct {
 	// Clock is how far the machine's clock is from the Hub's, or zero if
 	// the agent hasn't measured it since it started.
 	Clock Clock `json:"clock,omitzero"`
+	// PowerShell is the execution policy each PowerShell's scripts meet,
+	// Windows PowerShell's first, on Windows only.
+	PowerShell []PowerShell `json:"powershell,omitempty"`
 	// Log is the end of the agent's own log, oldest line first.
 	Log []string `json:"log"`
 }
@@ -170,6 +175,44 @@ type Clock struct {
 	Measured string        `json:"measured"`
 }
 
+// PowerShell is the execution policy a PowerShell's scripts meet, which
+// a job's step in that shell runs as: the policy in effect and the scope
+// that set it, or why it couldn't be read. A policy that Blocks fails
+// every step in the shell, but nothing else, so it isn't a Degraded
+// reason.
+type PowerShell struct {
+	// Shell is the shell, as a step's `shell:` names it: "powershell"
+	// for Windows PowerShell, "pwsh" for PowerShell 7.
+	Shell     string `json:"shell"`
+	Installed bool   `json:"installed"`
+	// Policy is the policy in effect, as PowerShell names it, and Scope
+	// where it came from: "MachinePolicy", "LocalMachine", or "none" for
+	// PowerShell's default.
+	Policy string `json:"policy,omitempty"`
+	Scope  string `json:"scope,omitempty"`
+	// Blocks reports that the policy refuses the runner's step scripts:
+	// it's Restricted or AllSigned.
+	Blocks bool `json:"blocks,omitempty"`
+	// Error says why the policy couldn't be read.
+	Error string `json:"error,omitempty"`
+}
+
+// PowerShellOf returns the report's PowerShell of the readings.
+func PowerShellOf(readings []winexecpolicy.Reading) []PowerShell {
+	var out []PowerShell
+	for _, r := range readings {
+		p := PowerShell{Shell: string(r.Shell), Installed: r.Installed}
+		switch {
+		case r.Err != nil:
+			p.Error = r.Err.Error()
+		case r.Installed:
+			p.Policy, p.Scope, p.Blocks = string(r.Policy), string(r.Scope), r.Blocks()
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // Sources are what the report is made of: what the agent holds, and
 // what it read of the machine.
 type Sources struct {
@@ -184,6 +227,9 @@ type Sources struct {
 	// if it couldn't be read.
 	FreeDisk int64
 	Clock    Clock
+	// PowerShell is the execution policy each PowerShell's scripts meet,
+	// on Windows, as PowerShellOf makes it, or nil elsewhere.
+	PowerShell []PowerShell
 	// Log is the end of the agent's own log, oldest line first.
 	Log []string
 }
@@ -197,15 +243,16 @@ func Of(s Sources) (Report, error) {
 		return Report{}, err
 	}
 	r := Report{
-		At:        store.Stamp(s.At),
-		Machine:   s.Machine,
-		RunnerApp: RunnerApp{Wanted: stored.RunnerApp, Installs: installs(n), Update: stored.Update},
-		Slots:     stored.Slots,
-		Exposure:  checks(n, s.Checks),
-		Outbox:    Outbox{Entries: len(n.Outbox)},
-		FreeDisk:  s.FreeDisk,
-		Clock:     s.Clock,
-		Log:       tail(s.Log),
+		At:         store.Stamp(s.At),
+		Machine:    s.Machine,
+		RunnerApp:  RunnerApp{Wanted: stored.RunnerApp, Installs: installs(n), Update: stored.Update},
+		Slots:      stored.Slots,
+		Exposure:   checks(n, s.Checks),
+		Outbox:     Outbox{Entries: len(n.Outbox)},
+		FreeDisk:   s.FreeDisk,
+		Clock:      s.Clock,
+		PowerShell: slices.Clone(s.PowerShell),
+		Log:        tail(s.Log),
 	}
 	if r.Slots == nil {
 		r.Slots = []store.Slot{}

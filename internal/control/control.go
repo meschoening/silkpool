@@ -1,6 +1,7 @@
-// Package control is the agent's local control channel: the Unix socket
-// that the node CLI, and later the tray app, use to ask the agent
-// service for its status and to send it commands. The decisions behind
+// Package control is the agent's local control channel: the Unix socket,
+// or on Windows the named pipe, that the node CLI, and later the tray
+// app, use to ask the agent service for its status and to send it
+// commands. The decisions behind
 // it are in "Define how the agent runs and launches slots on each OS",
 // recorded as ADR 0008, and "Name the CLI and define its commands".
 //
@@ -14,6 +15,9 @@
 //
 // Clients check the server the same way: they accept only a server
 // running as root, so a squatted socket can't impersonate the agent.
+//
+// Windows has no uids: control_windows.go's pipe identifies the caller
+// by its token, and its clients accept only a pipe SYSTEM controls.
 //
 // Each message is one line of JSON. The server speaks first, with a
 // hello or a refusal. Then the client sends requests, one at a time,
@@ -36,12 +40,14 @@ import (
 	"github.com/meschoening/silkpool/internal/wire"
 )
 
-// Path is the control socket on Linux. Its folder is root's, mode 0755,
-// so only root can create files in it, and the socket is mode 0666.
-const Path = "/run/silkpool/agent.sock"
+// Path is the control channel's endpoint. On Linux it's the control
+// socket, whose folder is root's, mode 0755, so only root can create
+// files in it, and which is mode 0666. Each other OS's file sets its
+// own, as its file sets AdminGroups.
+var Path = "/run/silkpool/agent.sock"
 
-// AdminGroups are the Linux groups whose members are administrators,
-// as polkit's distribution defaults have it.
+// AdminGroups are the groups whose members are administrators. On Linux
+// they're polkit's distribution defaults. macOS's file sets its own.
 var AdminGroups = []string{"sudo", "wheel", "admin"}
 
 // maxLine is the longest message either end reads.
@@ -64,6 +70,12 @@ const (
 	typeError       = "error"
 )
 
+// surfaceTray is a request's surface when the tray app sends it. A
+// request without one comes from the command line. The surface goes only
+// into the origin a command is recorded with: any administrator's
+// process can do what the CLI does (ADR 0008), so it grants nothing.
+const surfaceTray = "tray"
+
 // A message is any message either way, naming its type, with the fields
 // of that type.
 type message struct {
@@ -73,8 +85,10 @@ type message struct {
 	Version  string `json:"version,omitempty"`
 	Account  string `json:"account,omitempty"`
 	Elevated bool   `json:"elevated,omitempty"`
-	// A request's.
+	// A request's. Surface is "tray" for a request from the tray app,
+	// and empty for one from the CLI.
 	ID      string       `json:"id,omitempty"`
+	Surface string       `json:"surface,omitempty"`
 	Event   *store.Event `json:"event,omitempty"`
 	Notices []int64      `json:"notices,omitempty"`
 	Code    string       `json:"code,omitempty"`

@@ -255,7 +255,12 @@ func (v View) Provenance() string {
 		}
 		return fmt.Sprintf("Stopped now %s %s.", from, v.Clock.At(set.At))
 	case availability.TurnOffAutoResume, availability.EditAutoResume:
-		return fmt.Sprintf("Paused indefinitely when auto-resume was turned off %s %s.", from, v.Clock.At(set.At))
+		// An edit that leaves auto-resume on only moves a plain pause's
+		// resume time; one that turns it off makes the pause indefinite.
+		if n.Availability.Intent == availability.PausedIndefinitely {
+			return fmt.Sprintf("Paused indefinitely when auto-resume was turned off %s %s.", from, v.Clock.At(set.At))
+		}
+		return fmt.Sprintf("Auto-resume changed %s %s.", from, v.Clock.At(set.At))
 	}
 	if n.State() == node.Draining {
 		return fmt.Sprintf("Pause requested %s %s.", from, v.Clock.At(set.At))
@@ -285,10 +290,12 @@ var reasonDetails = map[node.Reason]string{
 	node.RunnerOffline:        "The runner's listener exited or didn't connect to GitHub.",
 	node.RunnerAppUnavailable: "The runner application couldn't be downloaded or verified, or GitHub no longer accepts its version.",
 	node.SlotCantStart:        "The slot couldn't be started or reset.",
-	node.SlotExposed:          "The slot's account can open something outside the slot.",
+	node.SlotExposed:          "Silkpool's service account can open something outside the slots.",
 	node.VersionMismatch:      "Upgrade Silkpool here or on the Hub, so that their versions match.",
 	node.HubIdentityChanged:   "The Hub presented a key other than the one this machine pinned when it enrolled.",
 	node.WrongNodeKey:         "The Hub holds a different key for this node.",
+	node.SmartAppControlOn:    "It blocks GitHub's runner application. " + turnOffSmartAppControl,
+	node.NoFullDiskAccess:     FullDiskAccess,
 }
 
 // A Row is a slot's row: its number, what it's doing, how long for, and
@@ -382,13 +389,13 @@ func (v View) row(s node.Slot, wanted bool) Row {
 		row.Main = "Resetting the slot…"
 		row.Sub = "Couldn't reset it · " + retry()
 		row.Amber = s.Degraded
-	case node.DeletingAccount:
-		row.Main = "Deleting the slot's account…"
+	case node.DeletingSlot:
+		row.Main = "Deleting the slot…"
 	case node.RetryingDelete:
-		row.Main = "Deleting the slot's account…"
+		row.Main = "Deleting the slot…"
 		row.Sub = "Couldn't delete it · " + retry()
 	case node.Deleted:
-		row.Main = "Slot account deleted"
+		row.Main = "Slot deleted"
 	}
 	return row
 }
@@ -429,7 +436,7 @@ func (v View) Notices() []NoticeText {
 			if x.Job.Run.Number > 0 {
 				name = fmt.Sprintf("%s #%d", name, x.Job.Run.Number)
 			}
-			t.Text = fmt.Sprintf("%s was interrupted when %s restarted %s. GitHub marks it failed; re-run it there if you need it.", name, v.Name, v.Clock.At(x.Raised))
+			t.Text = fmt.Sprintf("%s was interrupted on %s %s. Check its result on GitHub, and re-run it there if you need it.", name, v.Name, v.Clock.At(x.Raised))
 			t.Link = x.Job.Run.Link()
 		case node.NoticeUpdateFailed:
 			t.Text = Sentence(x.Detail)
@@ -587,7 +594,7 @@ func (v View) RemoveConfirm() string {
 	if len(jobs) > 0 {
 		first = fmt.Sprintf("%s finishes %s first; removing never cancels a job.", v.Name, list(jobs))
 	}
-	return first + " Then its slot accounts are deleted and it leaves the Hub for good. Enrolling it again needs a new code."
+	return first + " Then its slots are reset and it leaves the Hub for good. Enrolling it again needs a new code."
 }
 
 // RemoveQuestion asks for removal's confirmation.
@@ -603,7 +610,7 @@ func (v View) ForceRemoveConfirm() []string {
 	return []string{
 		fmt.Sprintf("remove --force removes %s here, without the Hub. It will:", v.Name),
 		"  " + stop,
-		"  Reset every slot, and delete its slot accounts.",
+		"  Reset every slot.",
 		"  Wipe its node key and its Hub's address.",
 		fmt.Sprintf("The Hub keeps its record of %s: remove it in the Hub too. Enrolling again needs a new code.", v.Name),
 	}

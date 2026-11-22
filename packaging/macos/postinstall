@@ -1,0 +1,91 @@
+#!/bin/sh
+# The .pkg's postinstall script (ADR 0013). installer runs it as root,
+# with the .pkg's path, the install location, the target volume and the
+# startup disk's root, once the payload is in place.
+#
+# It makes the service account every slot runs as, or checks it and
+# puts back what Silkpool owns of it (ADR 0007), with the silkpool the
+# payload put in the install location. Then it loads the agent's
+# LaunchDaemon, which idles until the machine is enrolled. On an upgrade
+# it boots the running agent out first, before the account, so that
+# nothing else changes the account as it's checked, and so that launchd
+# reads the new plist and runs the new binary: only the agent restarts,
+# never a slot's job (ADR 0006). An account it can't make fails the
+# install, saying why, with the agent not loaded: a node none of whose
+# slots could run shouldn't look installed. Then it starts the tray app
+# in the signed-in session, if someone is signed in at the Mac; anyone
+# signing in later gets it from its LaunchAgent. A job switched off in
+# Login Items stays off: the script loads neither job into a domain that
+# has it disabled.
+#
+# Installed onto another volume than the running system's, it loads
+# nothing.
+set -eu
+
+agent=io.github.meschoening.silkpool.agent
+tray=io.github.meschoening.silkpool.tray
+agent_plist=/Library/LaunchDaemons/$agent.plist
+tray_plist=/Library/LaunchAgents/$tray.plist
+# The silkpool the payload installed, in the install location installer
+# passes: / for the .pkg.
+silkpool=${2%/}/usr/local/bin/silkpool
+
+# loaded reports whether launchd has the service $1, as domain/label.
+loaded() {
+	launchctl print "$1" >/dev/null 2>&1
+}
+
+# disabled reports whether the domain $1 has the label $2 switched off,
+# as launchctl print-disabled shows it: "disabled", or "true" before
+# macOS 13.
+disabled() {
+	launchctl print-disabled "$1" 2>/dev/null | grep -Eq "^[[:space:]]*\"$2\" => (disabled|true)\$"
+}
+
+# bootstrap loads the plist $2 into the domain $1. A job just booted out
+# can take a while to go, and until it has, launchd refuses it again:
+# launchctl bootout can return while launchd tears the job down, which
+# gives its process 20 s, its default ExitTimeOut, to exit. So it tries
+# for 30 s.
+bootstrap() {
+	tries=0
+	until launchctl bootstrap "$1" "$2"; do
+		tries=$((tries + 1))
+		if [ "$tries" -ge 30 ]; then
+			return 1
+		fi
+		sleep 1
+	done
+}
+
+[ "${3:-/}" = / ] || exit 0
+
+if loaded "system/$agent"; then
+	launchctl bootout "system/$agent"
+fi
+if ! "$silkpool" make-service-account; then
+	echo "Silkpool couldn't make its service account, so its agent isn't running. Once what's above is put right, install Silkpool again." >&2
+	exit 1
+fi
+if disabled system "$agent"; then
+	echo "Silkpool's agent is switched off in Login Items, so it wasn't started."
+else
+	bootstrap system "$agent_plist"
+fi
+
+# The signed-in session is the console's owner, unless that's root, as at
+# the login window, or one of macOS's own accounts.
+user=$(stat -f %Su /dev/console)
+uid=$(stat -f %u /dev/console)
+case "$user" in
+root | loginwindow | _* | '') exit 0 ;;
+esac
+if loaded "gui/$uid/$tray"; then
+	launchctl bootout "gui/$uid/$tray" || true
+fi
+if disabled "gui/$uid" "$tray"; then
+	exit 0
+fi
+if ! bootstrap "gui/$uid" "$tray_plist"; then
+	echo "Couldn't start Silkpool's tray app for $user. It starts when they next sign in." >&2
+fi

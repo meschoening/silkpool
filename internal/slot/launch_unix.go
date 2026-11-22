@@ -1,3 +1,5 @@
+//go:build unix
+
 package slot
 
 import (
@@ -5,48 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 )
 
-// Helper runs silkpool as one of the helpers Silkpool starts as a slot
-// account, if args, the arguments after the program's name, name one:
-// the runner's launcher (LaunchMode), the reset's kill helper
-// (KillAllMode) or the exposure check (CheckMode). It returns the exit
-// code to exit with, and false if args name none of them.
-func Helper(args []string) (code int, ok bool) {
-	if len(args) == 0 {
-		return 0, false
-	}
-	switch args[0] {
-	case LaunchMode:
-		if len(args) != 2 {
-			fmt.Fprintln(os.Stderr, LaunchMode+" takes the runner root")
-			return 2, true
-		}
-		fmt.Fprintln(os.Stderr, Launch(args[1]))
-		return 1, true
-	case KillAllMode:
-		uid, err := strconv.Atoi(strings.Join(args[1:], " "))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, KillAllMode+" takes the slot account's UID")
-			return 2, true
-		}
-		if err := KillAll(uid); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1, true
-		}
-		return 0, true
-	case CheckMode:
-		return checkExposure(args[1:], os.Stdout), true
-	}
-	return 0, false
-}
-
 // LaunchMode is the hidden argument that runs silkpool as a runner's
 // launcher, `silkpool launch-listener <runner root>`, which every runner
-// unit starts as the slot account.
+// unit starts as the service account.
 const LaunchMode = "launch-listener"
 
 // configFile is the file in a runner root that holds its runner's JIT
@@ -56,6 +23,11 @@ const configFile = ".silkpool-jitconfig"
 // listener is the runner application's listener program, in a runner
 // root.
 var listener = filepath.Join("bin", "Runner.Listener")
+
+// WorkerProgram is the runner application's worker in a runner root:
+// the program the listener starts to run its job, just after taking it
+// (GLOSSARY.md's Worker).
+const WorkerProgram = "bin/Runner.Worker"
 
 // configVar is the variable the listener reads its JIT config from, and
 // deletes from its own environment before any job's step starts.
@@ -73,8 +45,23 @@ var forbidden = []string{
 	"ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT",
 }
 
+// channelTimeoutVar, with every listener started with channelTimeout,
+// is the runner's variable for how long, in seconds, its listener waits
+// to hand the Worker it started a message, the job above all, and channelTimeout
+// its longest, 300. The default, 30, can run out on a busy machine
+// before the Worker is up, since the slots give way on CPU to the
+// machine's other work (ADR 0014). The listener then kills the Worker
+// and exits without completing the job, which GitHub fails only when the
+// job's lease runs out, 10 minutes on (#285). The wait ends as soon as
+// the Worker takes the message, so it costs nothing when the machine
+// is quiet.
+const (
+	channelTimeoutVar = "GITHUB_ACTIONS_RUNNER_CHANNEL_TIMEOUT"
+	channelTimeout    = "300"
+)
+
 // Launch is the launcher of the runner whose root is root, which runs as
-// the slot account (ADR 0006). It reads the runner's JIT config from the
+// the service account (ADR 0006). It reads the runner's JIT config from the
 // file the agent wrote, deletes the file, and becomes the runner's
 // listener, `Runner.Listener run`, with the config in
 // ACTIONS_RUNNER_INPUT_JITCONFIG, so that it's never on a command line or

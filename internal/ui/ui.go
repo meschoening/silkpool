@@ -18,14 +18,15 @@
 // The words come from package wording, so the CLI, the tray app and the
 // dashboard can't drift.
 //
-// It holds no Hub code: it imports only package node and the packages
-// that write its words, so nodes never carry the dashboard.
+// It holds no Hub code: it imports only package node, the packages that
+// write its words, and package zone, so nodes never carry the dashboard.
 package ui
 
 import (
 	"embed"
 	"html/template"
 	"io/fs"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/meschoening/silkpool/internal/availability"
 	"github.com/meschoening/silkpool/internal/node"
 	"github.com/meschoening/silkpool/internal/wording"
+	"github.com/meschoening/silkpool/internal/zone"
 )
 
 //go:embed templates/*.tmpl
@@ -202,7 +204,7 @@ func slotGlyph(s node.Slot, r wording.Row) string {
 		return GlyphDraining
 	case s.Phase == node.Hosting && run.Listening:
 		return GlyphAvailable
-	case s.Phase == node.DeletingAccount || s.Phase == node.RetryingDelete:
+	case s.Phase == node.DeletingSlot || s.Phase == node.RetryingDelete:
 		return GlyphDraining
 	case s.Phase == node.Deleted || r.Main == "No runner":
 		return GlyphDrained
@@ -220,6 +222,48 @@ type Editor struct {
 	Preview  string
 	Zones    []string
 	Revision int64
+}
+
+// Zones are the time zones auto-resume's editor offers, beside the
+// draft's own: Central, Silkpool's default, first, then the rest west to
+// east.
+var Zones = []string{
+	zone.DefaultName, "America/Los_Angeles", "America/Denver", "America/New_York", "America/Sao_Paulo", "UTC",
+	"Europe/London", "Europe/Berlin", "Europe/Helsinki", "Africa/Johannesburg", "Asia/Kolkata", "Asia/Singapore",
+	"Asia/Tokyo", "Australia/Sydney", "Pacific/Auckland",
+}
+
+// named reports whether z is a zone a schedule can keep: not nil, which
+// Go would print as UTC, and not Local, which follows the OS and which Go
+// names after TZ when it's set.
+func named(z *time.Location) bool {
+	return z != nil && z != time.Local && z.String() != "" && z.String() != "Local"
+}
+
+// zone is the node's own zone, which a draft with no zone starts on: the
+// zone its clock prints in, which is its schedule's zone or, before it
+// has one, its OS's, or zone.Default if the clock names none.
+func (n Node) zone() *time.Location {
+	if named(n.Clock.Zone) {
+		return n.Clock.Zone
+	}
+	return zone.Default()
+}
+
+// EditorFor returns auto-resume's editor for n, open on draft, based on
+// revision: the dashboard's and the tray panel's, which offer the same
+// zones. A draft with no zone, as a new install's or a refused one's,
+// starts on the node's own zone, so the editor never saves a zone nobody
+// chose.
+func EditorFor(n Node, draft availability.AutoResume, revision int64) *Editor {
+	if !named(draft.Zone) {
+		draft.Zone = n.zone()
+	}
+	offered := Zones
+	if z := draft.Zone.String(); !slices.Contains(Zones, z) {
+		offered = append([]string{z}, Zones...)
+	}
+	return &Editor{Post: n.Post, Draft: draft, Preview: n.DraftPreview(draft), Zones: offered, Revision: revision}
 }
 
 // Weekdays are the editor's day toggles, Monday first: the day, and its

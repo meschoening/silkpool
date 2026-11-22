@@ -26,7 +26,8 @@ var osFolders = []string{
 	"tmp", "usr", "var",
 }
 
-// A view is what a slot's unit would see, read just before it starts.
+// A view is what a unit of the slots would see, read just before it
+// starts.
 type view struct {
 	// Top lists the entries at the top of the file system.
 	Top []entry
@@ -45,15 +46,18 @@ type entry struct {
 }
 
 // hidden returns the paths slot n's unit hides, sorted: the system D-Bus
-// socket, the layout's Logs and Hidden, everything in Root but slot n's
-// folder, and every entry or mount at the top of the file system outside
-// the OS folders (outside).
+// socket, the layout's Logs and Hidden, everything in Root but the
+// service account's home and slot n's folder, and every entry or mount
+// at the top of the file system outside the OS folders (outside). Every
+// slot runs as the one service account, so the account could reach
+// another slot's folder; its unit hides it. For n 0, the machine's
+// exposure check, it hides every slot's folder.
 func (l Layout) hidden(n int, v view) []string {
 	paths := []string{systemBus, l.Logs}
 	paths = append(paths, l.Hidden...)
 	paths = append(paths, v.outside()...)
 	for _, name := range v.Root {
-		if name != "slots" {
+		if name != "slots" && name != filepath.Base(l.Home()) {
 			paths = append(paths, filepath.Join(l.Root, name))
 		}
 	}
@@ -88,7 +92,7 @@ func (v view) outside() []string {
 	return slices.Compact(paths)
 }
 
-// look reads what a slot's unit would see now.
+// look reads what a unit of the slots would see now.
 func (l Layout) look() (view, error) {
 	var v view
 	top, err := os.ReadDir("/")
@@ -167,17 +171,4 @@ func unescape(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
-}
-
-// names returns the names in dir, or none if it doesn't exist.
-func names(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	var list []string
-	for _, e := range entries {
-		list = append(list, e.Name())
-	}
-	return list, err
 }

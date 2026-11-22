@@ -71,6 +71,9 @@ type Env struct {
 	// Wait waits between the looks at a node's removal, or is nil for a
 	// second.
 	Wait func(ctx context.Context) error
+	// Installers are the OSes code new offers commands for, or nil for
+	// wording.Shipped. Only tests set it.
+	Installers wording.Installers
 }
 
 // startCommand is what starts the Hub's service.

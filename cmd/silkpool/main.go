@@ -1,7 +1,7 @@
 // Command silkpool is Silkpool's node binary: the node CLI that
 // administrators run, and, through modes hidden from its help, the agent
-// service and the helpers it starts as a slot account, which only the OS
-// runs. See
+// service and the helpers it starts as the service account every slot
+// runs as, which only the OS runs. See
 // "Name the CLI and define its commands".
 package main
 
@@ -14,6 +14,8 @@ import (
 	"github.com/meschoening/silkpool/internal/cli"
 	"github.com/meschoening/silkpool/internal/control"
 	"github.com/meschoening/silkpool/internal/version"
+	"github.com/meschoening/silkpool/internal/winexecpolicy"
+	"github.com/meschoening/silkpool/internal/winsac"
 )
 
 // modes are the hidden modes, by their first argument, that only the OS
@@ -31,6 +33,20 @@ var helper = func(args []string) (code int, ok bool) { return 0, false }
 // supplies.
 var startCommand = "start the Silkpool service"
 
+// elevate says how to run a command that needs elevation, as the CLI
+// says it, or is empty for "with sudo". Windows's file sets its own.
+var elevate = ""
+
+// smartAppControl reads Smart App Control's state, which enroll names
+// while it would block the runner application, or is nil where there's
+// none. Windows's file sets it.
+var smartAppControl func() (winsac.State, error)
+
+// executionPolicy reads each PowerShell's execution policy, which enroll
+// names while it blocks a job's PowerShell steps, or is nil where
+// there's no PowerShell. Windows's file sets it.
+var executionPolicy func() []winexecpolicy.Reading
+
 func main() {
 	args := os.Args[1:]
 	// The helpers come first, with the signals' default handling, so that
@@ -46,15 +62,18 @@ func main() {
 		}
 	}
 	os.Exit(cli.Run(ctx, args, cli.Env{
-		Stdin:          os.Stdin,
-		Stdout:         os.Stdout,
-		Stderr:         os.Stderr,
-		Getenv:         os.Getenv,
-		StdinTerminal:  terminal(os.Stdin),
-		StdoutTerminal: terminal(os.Stdout),
-		Socket:         control.Path,
-		Version:        version.Version,
-		StartCommand:   startCommand,
+		Stdin:           os.Stdin,
+		Stdout:          os.Stdout,
+		Stderr:          os.Stderr,
+		Getenv:          os.Getenv,
+		StdinTerminal:   terminal(os.Stdin),
+		StdoutTerminal:  terminal(os.Stdout),
+		Socket:          control.Path,
+		Version:         version.Version,
+		StartCommand:    startCommand,
+		Elevate:         elevate,
+		SmartAppControl: smartAppControl,
+		ExecutionPolicy: executionPolicy,
 	}))
 }
 

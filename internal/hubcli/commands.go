@@ -107,9 +107,16 @@ func runCodeNew(ctx context.Context, s *session, args []string) int {
 	}
 	s.out("Enrollment code %s · single use · expires %s", c.ID, s.clock().When(c.Expires))
 	s.out("")
-	for _, cmd := range wording.EnrollCommands(c.Text) {
+	installers := s.env.Installers
+	if installers == nil {
+		installers = wording.Shipped
+	}
+	for _, cmd := range installers.EnrollCommands(c.Text) {
 		s.out("On %s, %s:", cmd.OSes, cmd.Where)
 		s.out("  %s", cmd.Command)
+	}
+	if missing := installers.Missing(); len(missing) > 0 {
+		s.out("%s", installers.NotYet(missing...))
 	}
 	s.out("")
 	s.out("%s", wording.EnrollNote)

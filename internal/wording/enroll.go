@@ -12,3 +12,14 @@ package wording
 // decided.
 const EnrollAnswerLost = "Run `sudo silkpool enroll <code>` again with the same code. That's safe: " +
 	"the machine joins as one node, whether or not the Hub enrolled it already."
+
+// SmartAppControl follows an enroll on a Windows machine whose Smart App
+// Control is on, or in evaluation, which may turn it on. It blocks
+// GitHub's unsigned runner application, so the node runs no jobs while
+// it's on, and shows it as its Degraded reason, node.SmartAppControlOn,
+// whose title begins this line, as "Define how each binary is packaged,
+// installed, upgraded and signed per OS" decided (ADR 0013).
+const SmartAppControl = "Smart App Control is on, and it blocks GitHub's runner application. " + turnOffSmartAppControl
+
+// turnOffSmartAppControl is where Smart App Control is turned off.
+const turnOffSmartAppControl = "Turn it off in Windows Security ▸ App & browser control."

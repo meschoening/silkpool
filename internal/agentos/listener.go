@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"syscall"
 
 	"github.com/meschoening/silkpool/internal/node"
 	"github.com/meschoening/silkpool/internal/secret"
@@ -84,12 +83,19 @@ func (l listenerLog) dead(runner string) []node.Event {
 	return events
 }
 
-// readLog reads the whole log at path. A log that isn't there says
-// nothing.
-func readLog(path string) (listenerLog, error) {
-	t := tail{path: path}
-	err := t.read("", nil)
-	return t.log, err
+// readLogs reads the whole of each log at paths, in turn, as one: what
+// the listener said in the first, then in the second, each event once.
+// A log that isn't there says nothing.
+func readLogs(paths ...string) (listenerLog, error) {
+	var l listenerLog
+	for _, p := range paths {
+		t := tail{path: p, log: l}
+		if err := t.read("", nil); err != nil {
+			return l, err
+		}
+		l = t.log
+	}
+	return l, nil
 }
 
 // A tail follows a listener's log as it's written, from its start.
@@ -106,7 +112,7 @@ type tail struct {
 // events they tell the node. A line still being written waits for its
 // end.
 func (t *tail) read(runner string, report func(node.Event)) error {
-	f, err := os.OpenFile(t.path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := openLog(t.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -146,15 +152,15 @@ func (t *tail) read(runner string, report func(node.Event)) error {
 }
 
 // scrubFile rewrites the log at path with every secret in it scrubbed,
-// through a new file renamed into place, root's alone.
+// through a new file renamed into place, root's or SYSTEM's alone.
 func scrubFile(path string) error {
-	in, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	in, err := openLog(path)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 	tmp := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".scrubbed")
-	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
+	out, err := createLog(tmp)
 	if err != nil {
 		return err
 	}
@@ -162,5 +168,7 @@ func scrubFile(path string) error {
 		os.Remove(tmp)
 		return err
 	}
+	// Windows won't replace a file still open, so the log is closed first.
+	in.Close()
 	return os.Rename(tmp, path)
 }

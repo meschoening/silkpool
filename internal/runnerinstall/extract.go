@@ -1,3 +1,5 @@
+//go:build unix
+
 package runnerinstall
 
 import (
@@ -71,12 +73,12 @@ func extract(pkg, dir string) error {
 
 func extractEntry(root *os.Root, tr *tar.Reader, h *tar.Header, name string) error {
 	if err := root.MkdirAll(path.Dir(name), 0o755); err != nil {
-		return entryFailed(h, err)
+		return entryFailed(h.Name, err)
 	}
 	switch h.Typeflag {
 	case tar.TypeDir:
 		if err := root.MkdirAll(name, 0o755); err != nil {
-			return entryFailed(h, err)
+			return entryFailed(h.Name, err)
 		}
 		return root.Chmod(name, 0o755)
 	case tar.TypeReg:
@@ -86,21 +88,21 @@ func extractEntry(root *os.Root, tr *tar.Reader, h *tar.Header, name string) err
 		}
 		f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 		if err != nil {
-			return entryFailed(h, err)
+			return entryFailed(h.Name, err)
 		}
 		_, err = io.Copy(f, tr)
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
 		if err != nil {
-			return entryFailed(h, err)
+			return entryFailed(h.Name, err)
 		}
 		return root.Chmod(name, perm)
 	case tar.TypeSymlink:
 		if path.IsAbs(h.Linkname) || !filepath.IsLocal(path.Join(path.Dir(name), h.Linkname)) {
 			return outside(h)
 		}
-		return entryFailed(h, root.Symlink(h.Linkname, name))
+		return entryFailed(h.Name, root.Symlink(h.Linkname, name))
 	case tar.TypeLink:
 		if !filepath.IsLocal(path.Clean(h.Linkname)) {
 			return outside(h)
@@ -110,7 +112,7 @@ func extractEntry(root *os.Root, tr *tar.Reader, h *tar.Header, name string) err
 		if info, err := root.Lstat(path.Clean(h.Linkname)); err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("its package holds the hardlink %q -> %q, which isn't to a file in it", h.Name, h.Linkname)
 		}
-		return entryFailed(h, root.Link(path.Clean(h.Linkname), name))
+		return entryFailed(h.Name, root.Link(path.Clean(h.Linkname), name))
 	case tar.TypeXGlobalHeader:
 		return nil
 	}
@@ -121,13 +123,3 @@ func extractEntry(root *os.Root, tr *tar.Reader, h *tar.Header, name string) err
 func outside(h *tar.Header) error {
 	return fmt.Errorf("its package holds the link %q -> %q, which points outside its folder", h.Name, h.Linkname)
 }
-
-// entryFailed describes err, which extracting h met, or returns nil.
-func entryFailed(h *tar.Header, err error) error {
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("couldn't extract %q from its package: %w", h.Name, err)
-}
-
-func damaged(err error) error { return fmt.Errorf("its package is damaged: %w", err) }

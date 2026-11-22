@@ -181,13 +181,15 @@ const (
 	// RetryingReset failed to reset the slot, and tries again at
 	// Failure.RetryAt.
 	RetryingReset
-	// DeletingAccount is deleting the slot's account, after its reset,
-	// because the node is being removed.
-	DeletingAccount
-	// RetryingDelete failed to delete the slot's account, and tries
+	// DeletingSlot is deleting what the slot keeps on the machine, such
+	// as its folder, after its reset, because the node is being removed.
+	// The machine's service account stays: removing the node never
+	// deletes it (ADR 0007).
+	DeletingSlot
+	// RetryingDelete failed to delete what the slot keeps, and tries
 	// again at Failure.RetryAt.
 	RetryingDelete
-	// Deleted has had its account deleted, and is gone with the node.
+	// Deleted has had what it keeps deleted, and is gone with the node.
 	Deleted
 )
 
@@ -205,8 +207,8 @@ func (p Phase) String() string {
 		return "resetting"
 	case RetryingReset:
 		return "retrying reset"
-	case DeletingAccount:
-		return "deleting account"
+	case DeletingSlot:
+		return "deleting slot"
 	case RetryingDelete:
 		return "retrying delete"
 	case Deleted:
@@ -335,6 +337,15 @@ const (
 	// rotate, so the Detail names the fix: remove the node and enroll the
 	// machine again.
 	WrongNodeKey
+	// SmartAppControlOn: Windows' Smart App Control is on, which blocks
+	// GitHub's unsigned runner application, so the agent starts no
+	// runner while it is (ADR 0013).
+	SmartAppControlOn
+	// NoFullDiskAccess: the Mac's agent hasn't Full Disk Access, without
+	// which macOS refuses its clean what jobs leave in the service
+	// account's /var/folders folders, so the agent starts no runner while
+	// it hasn't (#306).
+	NoFullDiskAccess
 )
 
 func (r Reason) String() string {
@@ -359,6 +370,10 @@ func (r Reason) String() string {
 		return "Hub identity changed"
 	case WrongNodeKey:
 		return "Hub holds a different key for this node"
+	case SmartAppControlOn:
+		return "Smart App Control is on"
+	case NoFullDiskAccess:
+		return "Silkpool needs Full Disk Access"
 	}
 	return fmt.Sprintf("Reason(%d)", int(r))
 }

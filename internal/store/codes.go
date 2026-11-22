@@ -65,15 +65,15 @@ var (
 		availability.OnDuty:             "on-duty",
 	})
 	phases = NewCodes("slot phase", map[node.Phase]string{
-		node.Free:            "free",
-		node.Preparing:       "preparing",
-		node.Requesting:      "requesting",
-		node.Hosting:         "hosting",
-		node.Resetting:       "resetting",
-		node.RetryingReset:   "retrying-reset",
-		node.DeletingAccount: "deleting-account",
-		node.RetryingDelete:  "retrying-delete",
-		node.Deleted:         "deleted",
+		node.Free:           "free",
+		node.Preparing:      "preparing",
+		node.Requesting:     "requesting",
+		node.Hosting:        "hosting",
+		node.Resetting:      "resetting",
+		node.RetryingReset:  "retrying-reset",
+		node.DeletingSlot:   "deleting-account", // its code from when it deleted a slot account
+		node.RetryingDelete: "retrying-delete",
+		node.Deleted:        "deleted",
 	})
 	retirements = NewCodes("retirement", map[node.Retirement]string{
 		node.NotRetiring:     "",
@@ -95,6 +95,8 @@ var (
 		node.VersionMismatch:      "version-mismatch",
 		node.HubIdentityChanged:   "hub-identity-changed",
 		node.WrongNodeKey:         "wrong-node-key",
+		node.SmartAppControlOn:    "smart-app-control-on",
+		node.NoFullDiskAccess:     "no-full-disk-access",
 	})
 	surfaces = NewCodes("surface", map[node.Surface]string{
 		0:                   "",

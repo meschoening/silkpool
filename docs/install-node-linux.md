@@ -1,6 +1,6 @@
 # Install a node on Linux
 
-A node is a machine enrolled in your Hub, whose slots run your GitHub Actions jobs. Each slot runs one job at a time, as a dedicated account of its own. On Linux, a node has no desktop app: you use the `silkpool` CLI, and the Hub's dashboard.
+A node is a machine enrolled in your Hub, whose slots run your GitHub Actions jobs. Each slot runs one job at a time, and every slot runs as one dedicated account, Silkpool's service account. On Linux, a node has no desktop app: you use the `silkpool` CLI, and the Hub's dashboard.
 
 ## Before you install
 
@@ -42,6 +42,7 @@ silkpool resume
 | `/usr/lib/systemd/system/silkpool.slice` | the slice every slot runs in |
 | `/var/lib/silkpool` | the agent's state, in `state`, only root's; the runner application's installs; and each slot's folder |
 | `/var/log/silkpool` | the agent's log, and each runner's logs, only root's |
+| Silkpool's service account | the account every slot runs as, with its home in `/var/lib/silkpool` |
 | `/run/silkpool` | the CLI's socket |
 
 The package also installs what GitHub's runner application needs: `ca-certificates`, ICU and the Kerberos libraries.
@@ -50,15 +51,16 @@ If the agent's service isn't running, start it with `sudo systemctl start silkpo
 
 ## What a slot can and can't do
 
-Each slot runs its jobs as a slot account of its own: a standard account that can't log in, isn't in `sudo` or any admin group, and is deleted with the slot. On Linux, a slot's jobs also run in a systemd sandbox.
+Every slot runs its jobs as Silkpool's service account: a standard account that can't log in, isn't in `sudo` or any admin group, and is made when the package is installed and deleted when it's removed. Each slot's jobs also run in a systemd sandbox of their own.
 
-- **Defended:** a job can't read or change your files, another slot's files, the agent or the Hub. It can't see `/home`, `/root`, `/mnt`, `/media`, or any other top-level folder outside the OS folders. When its runner ends, nothing of the job is left running, and nothing in the slot carries over to the next job.
-- **Not defended:** kernel or OS privilege-escalation exploits, and what a job can reach on your network. Slots get the machine's network as it is.
-- **The exposure check** runs as each slot account, before the slot gets a runner. If the slot could change something in the OS folders, such as a folder in `/usr` or `/opt` that the slot account can write, the node shows Degraded, "Slot can see files outside its own", naming the path. Fix its permissions or move it.
+- **Defended:** a job can't read or change your files, the agent or the Hub. It can't see `/home`, `/root`, `/mnt`, `/media`, or any other top-level folder outside the OS folders. When its runner ends, nothing of the job is left running in its slot, and nothing in the slot's folders or its `/tmp` carries over to the next job.
+- **Not defended:** kernel or OS privilege-escalation exploits, what a job can reach on your network, and one slot's job against another slot's on the same machine. Slots get the machine's network as it is. Since every slot runs as one account, a job can signal another slot's processes, and may reach its files. That's accepted because every slot on a node serves the same operator.
+- **Cleaned when every slot is idle:** the service account's home, its crontab, `at` jobs and linger, and any process it still has outside a slot. Until then, what a job leaves in those can reach a later job on any slot.
+- **The exposure check** runs once for the machine, as the service account, before its slots get runners. If the account could change something in the OS folders, such as a folder in `/usr` or `/opt` that it can write, every slot closes and the node shows Degraded, "Slot can see files outside its own", naming the path. Fix its permissions or move it.
 - **Jobs a slot can't run:**
   - anything that needs Docker or another container engine: a job's `container:`, service containers, `docker build`, and builds such as cibuildwheel's manylinux images;
   - anything that needs a signed-in desktop session.
-- **No caches survive a job.** A slot's home and folders are emptied after every job, so tool, package and image caches don't carry over. Use GitHub's `actions/cache` instead.
+- **No caches are kept on purpose.** A slot's folders are emptied after every job, and the service account's home whenever every slot is idle. A cache in the home can reach later jobs until then, but don't count on it. Use GitHub's `actions/cache` instead.
 - Silkpool's runners never serve public repositories.
 
 **Emergency stop** stops the node's running jobs. GitHub marks each one failed, and the node stays Paused indefinitely until you resume it.
@@ -112,7 +114,7 @@ Remove the node from its Hub first:
 sudo silkpool remove
 ```
 
-It waits for running jobs to finish, deletes the slots' accounts, and leaves the Hub for good. If the Hub is gone, use `sudo silkpool remove --force`, which removes the node on this machine only, then remove it in the Hub too if you can.
+It waits for running jobs to finish, resets the slots, and leaves the Hub for good. The service account stays until you remove the package. If the Hub is gone, use `sudo silkpool remove --force`, which removes the node on this machine only, then remove it in the Hub too if you can.
 
 Then remove the package:
 
@@ -120,7 +122,7 @@ Then remove the package:
 sudo apt-get remove silkpool
 ```
 
-or `sudo dnf remove silkpool`. That deletes everything Silkpool put on the machine: the program, its units, `/var/lib/silkpool` and `/var/log/silkpool`. While the machine is still enrolled, the package refuses to be removed:
+or `sudo dnf remove silkpool`. That deletes everything Silkpool put on the machine: the program, its units, the service account, `/var/lib/silkpool` and `/var/log/silkpool`. It refuses, and deletes nothing, while a process still runs as the service account or Silkpool can't prove the account is its own. While the machine is still enrolled, the package refuses to be removed:
 
 ```text
 This machine is still enrolled in https://hub.example.com. Run `silkpool remove` first, or `silkpool remove --force` if the Hub is gone.

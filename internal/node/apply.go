@@ -208,12 +208,12 @@ func (a *applying) record(e Event) {
 			s.Phase = RetryingReset
 			a.fail(s, SlotCantStart, e.Detail)
 		}
-	case AccountDeleted:
-		if s := a.slot(e.Slot, DeletingAccount); s != nil {
+	case SlotDeleted:
+		if s := a.slot(e.Slot, DeletingSlot); s != nil {
 			s.Phase, s.Failure = Deleted, Failure{}
 		}
 	case DeleteFailed:
-		if s := a.slot(e.Slot, DeletingAccount); s != nil && a.n.Removal.Force {
+		if s := a.slot(e.Slot, DeletingSlot); s != nil && a.n.Removal.Force {
 			s.Phase = Deleted
 			a.emit(NotCleanedUp(e))
 		} else if s != nil {
@@ -259,7 +259,7 @@ func (a *applying) exited(s *Slot, code int) {
 	r := s.Runner
 	switch {
 	case r.Job != "":
-		a.jobEnded(s, code == 0)
+		a.jobEnded(s)
 	case code == ExitVersionRefused:
 		a.refused(s)
 	case r.Retirement == NotRetiring && !r.Late:
@@ -355,12 +355,12 @@ func (a *applying) started(alive []string) {
 			s.Phase = Free
 		case s.Phase == Resetting:
 			a.emit(ResetSlot{Slot: s.Number})
-		case s.Phase == DeletingAccount:
-			a.emit(DeleteAccount{Slot: s.Number})
+		case s.Phase == DeletingSlot:
+			a.emit(DeleteSlot{Slot: s.Number})
 		case s.Phase != Hosting:
 		case !slices.Contains(alive, r.Name):
 			if r.Job != "" {
-				a.jobEnded(s, false)
+				a.jobEnded(s)
 			}
 			a.reset(s)
 		case r.Retirement == Retiring && r.RetireAt.IsZero():
@@ -412,8 +412,8 @@ func (a *applying) settleSlot(s *Slot) {
 	case Free:
 		switch {
 		case a.n.Removal.Started:
-			s.Phase, s.Failure = DeletingAccount, Failure{}
-			a.emit(DeleteAccount{Slot: s.Number})
+			s.Phase, s.Failure = DeletingSlot, Failure{}
+			a.emit(DeleteSlot{Slot: s.Number})
 		case !wanted && s.Failure.Reason != SlotExposed:
 			s.Failure = Failure{}
 		case !wanted:
@@ -428,8 +428,8 @@ func (a *applying) settleSlot(s *Slot) {
 		}
 	case RetryingDelete:
 		if !a.now.Before(s.Failure.RetryAt) {
-			s.Phase = DeletingAccount
-			a.emit(DeleteAccount{Slot: s.Number})
+			s.Phase = DeletingSlot
+			a.emit(DeleteSlot{Slot: s.Number})
 		}
 	case Hosting:
 		a.settleRunner(s, wanted)

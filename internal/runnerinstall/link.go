@@ -1,3 +1,5 @@
+//go:build unix
+
 package runnerinstall
 
 import (
@@ -13,19 +15,23 @@ import (
 
 // Link builds a runner's root at root, such as
 // /var/lib/silkpool/slots/1/runner, from links to the install of
-// version, for a slot account with uid and gid.
+// version, for the machine's service account, which every slot runs as,
+// with uid and gid.
 //
-// The root's files are hardlinks to the install's, so they stay owned
-// by root and read-only to the slot: a job can't change the install
-// through them. Its folders and symlinks are made afresh, owned by root,
-// and none of them leads into the install, which a slot reaches only
-// through its links. The root folder itself belongs to the slot account,
-// 0700, so the runner can write its own files in it: .runner, its
-// credentials, _diag and _work.
+// The root's files are linked to the install's, so they stay owned by
+// root and read-only to the account: a job can't change the install through
+// them. On Linux they're hardlinks to the install's files. On macOS
+// they're APFS clones, files of their own that share the install's
+// blocks and keep its files' modes and, made by root, their owner; even
+// a change to one never reaches the install. Its folders and symlinks
+// are made afresh, owned by root, and none of them leads into the
+// install, which a job reaches only through its links. The root folder
+// itself belongs to the service account, 0700, so the runner can write its
+// own files in it: .runner, its credentials, _diag and _work.
 //
 // root must not exist yet, because each runner gets a fresh one, and its
-// parent must, on the same filesystem as Dir. A failed Link leaves no
-// root behind.
+// parent must, on the same filesystem as Dir: an APFS volume on macOS. A
+// failed Link leaves no root behind.
 func (i Installs) Link(version, root string, uid, gid int) error {
 	if !runnerapp.Valid(version) {
 		return fmt.Errorf("%q isn't a version of the runner application", version)
@@ -45,7 +51,7 @@ func (i Installs) Link(version, root string, uid, gid int) error {
 		os.RemoveAll(root)
 		return err
 	}
-	// Last, so the slot can't touch the root until it's complete.
+	// Last, so the account can't touch the root until it's complete.
 	if err := os.Chown(root, uid, gid); err != nil {
 		os.RemoveAll(root)
 		return err
@@ -71,7 +77,7 @@ func link(install, root string) error {
 			}
 			return os.Chmod(dst, 0o755)
 		case t.IsRegular():
-			err := os.Link(path, dst)
+			err := linkFile(path, dst)
 			if errors.Is(err, syscall.EXDEV) {
 				return fmt.Errorf("%s isn't on the same filesystem as the installs in %s", root, filepath.Dir(install))
 			}
@@ -81,8 +87,21 @@ func link(install, root string) error {
 			if err != nil {
 				return err
 			}
-			return os.Symlink(target, dst)
+			if err := os.Symlink(target, dst); err != nil {
+				return err
+			}
+			return readableSymlink(dst)
 		}
 		return fmt.Errorf("the install holds %s, which isn't a file, a folder or a link", rel)
 	})
 }
+
+// linkFile links the install's file src into a runner's root as dst,
+// which isn't there yet. It's a hardlink, but macOS's file makes it an
+// APFS clone.
+var linkFile = os.Link
+
+// readableSymlink makes the new symlink at path readable by everyone,
+// whatever the agent's umask, since a job reads it: node does, resolving
+// npm. Linux's symlinks always are; macOS's file sets the mode.
+var readableSymlink = func(string) error { return nil }
