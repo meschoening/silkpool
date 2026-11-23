@@ -20,7 +20,7 @@ import (
 
 // migrations make the Hub's schema, one version each. A change to the
 // stored form adds one, and a golden file of the version it makes.
-var migrations = []store.Migration{createV1}
+var migrations = []store.Migration{createV1, addRefusedAt}
 
 // tooNew is what the operator can do about a database a newer Silkpool
 // wrote. The copy of the state folder made before upgrading is the
@@ -30,6 +30,12 @@ const tooNew = "install that version again, or restore the state folder from the
 // The entity tables, in the order they're saved. Each holds one row per
 // entity: its key, its position, and its stored form as JSON.
 var tableNames = []string{"settings", "connections", "targets", "nodes", "codes", "runners", "registration_nodes"}
+
+// addRefusedAt makes version 2, whose runners can carry refused_at,
+// when GitHub refused to delete a runner that had reported no job
+// (#349). The bodies are JSON, and a runner without it has none, so the
+// tables don't change.
+func addRefusedAt(*sql.Tx) error { return nil }
 
 func createV1(tx *sql.Tx) error {
 	for _, name := range tableNames {

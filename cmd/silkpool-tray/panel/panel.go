@@ -11,7 +11,9 @@
 // to the agent through a Sender, the tray's link, as "Connect the tray
 // app to the agent's control channel" asks. While it can't read the
 // agent, it says why: the service isn't running, or the account isn't an
-// administrator's.
+// administrator's. While the machine isn't enrolled, it says so and how
+// to enroll it, as `silkpool status` does, with none of the node's
+// controls (#348).
 //
 // It doesn't import Wails, so its tests run in the default lane.
 package panel
@@ -157,6 +159,23 @@ func shortName(host string) string {
 	return name
 }
 
+// instead are the panel's words in place of the node, when it has none to
+// show: while it can't read the agent, or while the machine isn't
+// enrolled, before which the agent refuses every command. It's nil while
+// the panel shows the node. p.mu must be held.
+func (p *Panel) instead() *wording.TrayDown {
+	var d wording.TrayDown
+	switch {
+	case p.down != nil:
+		d = p.downWords()
+	case p.have && !p.shown.node.Enrolled:
+		d = wording.TrayNotEnrolled(p.mac)
+	default:
+		return nil
+	}
+	return &d
+}
+
 // downWords are the panel's words while it can't read the agent. p.mu
 // must be held, and p.down set.
 func (p *Panel) downWords() wording.TrayDown {
@@ -207,8 +226,8 @@ func read(st control.Status) (shown, error) {
 func (p *Panel) Icon() (glyph, tooltip string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.down != nil {
-		return ui.GlyphLastKnown, wording.TrayTooltipDown(p.name(), p.downWords())
+	if d := p.instead(); d != nil {
+		return ui.GlyphLastKnown, wording.TrayTooltipDown(p.name(), *d)
 	}
 	n := p.node()
 	return n.Glyph(), n.TrayTooltip()
@@ -232,8 +251,9 @@ type page struct {
 	Name      string
 	Node      ui.Node
 	OSVersion string
-	// Down is what the panel says while it can't read the agent, when it
-	// shows nothing else.
+	// Down is what the panel says in place of the node, while it can't
+	// read the agent or while the machine isn't enrolled, when it shows
+	// nothing else.
 	Down *wording.TrayDown
 	// Said is what came of the panel's last command, if it didn't apply.
 	Said string
@@ -258,9 +278,8 @@ type page struct {
 // page is the panel's page with the editor or confirmation q opens. p.mu
 // must be held.
 func (p *Panel) page(q url.Values) page {
-	if p.down != nil {
-		d := p.downWords()
-		pg := page{OS: p.os, Name: p.name(), Down: &d, Hub: d.Foot}
+	if d := p.instead(); d != nil {
+		pg := page{OS: p.os, Name: p.name(), Down: d, Hub: d.Foot}
 		if p.have {
 			pg.OSVersion, pg.Dashboard = p.shown.osVersion, dashboard(p.shown.hubURL)
 		}

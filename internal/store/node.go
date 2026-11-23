@@ -94,6 +94,7 @@ type Runner struct {
 	Retirement     string `json:"retirement,omitempty"`
 	RetireAttempts int    `json:"retire_attempts,omitempty"`
 	RetireAt       string `json:"retire_at,omitempty"`
+	RefusedAt      string `json:"refused_at,omitempty"`
 	KillAt         string `json:"kill_at,omitempty"`
 	InterruptAt    string `json:"interrupt_at,omitempty"`
 }
@@ -484,6 +485,7 @@ func (e *encoder) slot(s node.Slot) Slot {
 			Retirement:     code(e, retirements, r.Retirement),
 			RetireAttempts: r.RetireAttempts,
 			RetireAt:       Stamp(r.RetireAt),
+			RefusedAt:      Stamp(r.RefusedAt),
 			KillAt:         Stamp(r.KillAt),
 			InterruptAt:    Stamp(r.InterruptAt),
 		},
@@ -663,6 +665,7 @@ func (d *decoder) slot(s Slot) node.Slot {
 			Retirement:     value(d, retirements, r.Retirement),
 			RetireAttempts: r.RetireAttempts,
 			RetireAt:       d.time(r.RetireAt),
+			RefusedAt:      d.time(r.RefusedAt),
 			KillAt:         d.time(r.KillAt),
 			InterruptAt:    d.time(r.InterruptAt),
 		},

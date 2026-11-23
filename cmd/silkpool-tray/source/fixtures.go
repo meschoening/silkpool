@@ -56,6 +56,11 @@ var (
 
 // Fixtures are the nodes the fake can show, in its menu's order.
 var Fixtures = []Fixture{
+	// The node of a machine that isn't enrolled yet, as a new install's
+	// agent reports it: the zero node, which Status gives with no Hub.
+	{"not-enrolled", "Not enrolled", func(time.Time, *time.Location) (node.Node, error) {
+		return node.Node{}, nil
+	}},
 	{"new", "Newly enrolled", func(at time.Time, zone *time.Location) (node.Node, error) {
 		n, err := node.New(zone)
 		if err != nil {

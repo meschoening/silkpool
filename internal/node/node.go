@@ -46,6 +46,12 @@ const (
 	// A listener interrupted before its worker is up drops the job without
 	// anyone reporting it.
 	WorkerWait = 5 * time.Second
+	// JobWait is how long a runner GitHub refused to delete (422), which
+	// has reported no job, has for one to start before the node stops its
+	// listener anyway. A job GitHub assigns reaches a live listener within
+	// seconds (#16), but GitHub can refuse a runner with no job for half
+	// an hour (#349). The Hub deletes the registration once GitHub lets go.
+	JobWait = 2 * time.Minute
 	// FirstRetry and MaxRetry bound the wait between attempts, which
 	// doubles from FirstRetry up to MaxRetry.
 	FirstRetry = 5 * time.Second
@@ -254,10 +260,14 @@ type Runner struct {
 	// Version is the version of the install its listener started from.
 	Version    string
 	Retirement Retirement
-	// RetireAttempts counts unanswered requests to retire it, and
-	// RetireAt is when to ask again, or zero while a request is out.
+	// RetireAttempts counts unanswered or refused requests to retire it,
+	// and RetireAt is when to ask again, or zero while a request is out.
 	RetireAttempts int
 	RetireAt       time.Time
+	// RefusedAt is when GitHub refused to delete it (422) while it had
+	// reported no job, from which it has JobWait for one to start, or
+	// zero.
+	RefusedAt time.Time
 	// KillAt is when to kill an interrupted listener, or zero once it's
 	// been killed, or while its stop is held.
 	KillAt time.Time
@@ -282,10 +292,17 @@ const (
 	// Retiring has asked the Hub to delete its registration.
 	Retiring
 	// ClosingAfterJob was refused deletion (422) because it has, or is
-	// about to get, its one job. It's left alone until it exits.
+	// about to get, its one job. Once it reports the job, it's left alone
+	// until it exits. Until then the node asks again, backing off, and at
+	// the end of its JobWait, counted from the first refusal, and stops it
+	// as Stopping if GitHub refuses again then: GitHub can refuse a runner
+	// that has none (#349).
 	ClosingAfterJob
 	// Stopping had its registration deleted, so it can never get a job,
-	// and its listener has been interrupted.
+	// or was refused deletion for JobWait without a job starting, and its
+	// listener has been interrupted. The Hub deletes a registration that's
+	// left once the node no longer hosts it, retrying until GitHub lets
+	// go.
 	Stopping
 	// Cancelling had its listener interrupted by Emergency stop, job and
 	// all.
@@ -512,7 +529,7 @@ func (n Node) deadline() time.Time {
 			times = append(times, r.Started.Add(OnlineTimeout))
 		case r.Retirement == NotRetiring && wanted && !r.Listening:
 			times = append(times, s.Failure.RetryAt)
-		case r.Retirement == Retiring:
+		case r.Retirement == Retiring, r.Retirement == ClosingAfterJob && r.Job == "":
 			times = append(times, r.RetireAt)
 		case r.Retirement.signalled():
 			times = append(times, r.InterruptAt, r.KillAt)

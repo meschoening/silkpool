@@ -113,7 +113,8 @@ func (f *Fake) Dismiss(context.Context, []int64) (control.Reply, error) {
 
 // Status is fixture x's status as the agent on machine, enrolled in the
 // Hub at hubURL, would report it at now, with the fixture's times set
-// from at.
+// from at. A node that isn't enrolled has no Hub, as the agent reports
+// none before enrolling.
 func (x Fixture) Status(machine wire.Machine, hubURL string, at, now time.Time) (control.Status, error) {
 	zone, err := time.LoadLocation(machine.Zone)
 	if err != nil {
@@ -123,10 +124,13 @@ func (x Fixture) Status(machine wire.Machine, hubURL string, at, now time.Time) 
 	if err != nil {
 		return control.Status{}, err
 	}
-	since := at.Add(-time.Hour)
-	if !n.Connected {
-		since = at.Add(-12 * time.Minute)
+	var hub control.Hub
+	if n.Enrolled {
+		since := at.Add(-time.Hour)
+		if !n.Connected {
+			since = at.Add(-12 * time.Minute)
+		}
+		hub = control.Hub{URL: hubURL, Node: "node-" + machine.Hostname, Since: store.Stamp(since)}
 	}
-	return control.StatusOf(version.Version, machine, store.Stamp(now), n,
-		control.Hub{URL: hubURL, Node: "node-" + machine.Hostname, Since: store.Stamp(since)})
+	return control.StatusOf(version.Version, machine, store.Stamp(now), n, hub)
 }

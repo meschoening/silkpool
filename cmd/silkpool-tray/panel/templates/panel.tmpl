@@ -1,4 +1,4 @@
-{{/* The panel's page, from a page: variant A, "Flyout", of "Prototype the tray and menu-bar panel", top to bottom. While the tray can't read the agent, the head and the state say why, the footer says it checks again, and the parts between are empty and hidden. The window is transparent over the OS's material (Acrylic on Windows, vibrancy on macOS), which also rounds its corners, so the page draws no ground of its own. It loads the shared live-update script and the panel's own, from files, with no inline style or script. Each part is live. */}}
+{{/* The panel's page, from a page: variant A, "Flyout", of "Prototype the tray and menu-bar panel", top to bottom. While the tray can't read the agent, the head and the state say why, the footer says it checks again, and the parts between are empty and hidden; and so while the machine isn't enrolled, with how to enroll it. The window is transparent over the OS's material (Acrylic on Windows, vibrancy on macOS), which also rounds its corners, so the page draws no ground of its own. It loads the shared live-update script and the panel's own, from files, with no inline style or script. Each part is live. */}}
 {{define "page"}}<!doctype html>
 <html lang="en" data-os="{{.OS}}">
 <head>
@@ -27,12 +27,15 @@
 {{/* The header: the machine's name and OS version, and the state chip, or the dashed ring with why the tray can't read the agent. */}}
 {{define "panel-head"}}<header class="p-h" id="panel-head"><div class="p-id"><div class="nm">{{.Name}}</div><div class="meta">{{.OSVersion}}</div></div>{{with .Down}}<span class="chip is-lastknown" data-key="chip">{{template "glyph-key" (glyph "lastknown" 16)}}{{.State}}</span>{{else}}{{template "chip" .Node}}{{end}}</header>{{end}}
 
-{{/* The notices, when there are any, then the state sentence; or why the tray can't read the agent, and what that means. */}}
+{{/* The notices, when there are any, then the state sentence; or why the tray shows no node, what that means, and the command to run, if there's one. */}}
 {{define "panel-state"}}<section class="p-s stack" id="panel-state">
 {{- with .Down}}
 <div class="story" data-key="sentence">
 <p class="lead">{{.Lead}}</p>
 <p class="sub">{{.Sub}}</p>
+{{- with .Command}}
+<p class="sub"><code>{{.}}</code></p>
+{{- end}}
 </div>
 {{- else}}
 {{- template "notices" .Node}}

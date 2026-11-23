@@ -126,12 +126,13 @@ func (p *Panel) sendCommand(w http.ResponseWriter, r *http.Request, e availabili
 	p.deliver(w, r, func(ctx context.Context) (control.Reply, error) { return p.send.Command(ctx, e) })
 }
 
-// deliver sends a command through do, unless the panel can't read the
-// agent, which it shows instead of the controls, and answers with the
-// panel, saying what came of the command if it didn't apply.
+// deliver sends a command through do, unless the panel shows no node,
+// and so no controls, because it can't read the agent or the machine
+// isn't enrolled, and answers with the panel, saying what came of the
+// command if it didn't apply.
 func (p *Panel) deliver(w http.ResponseWriter, r *http.Request, do func(context.Context) (control.Reply, error)) {
 	p.mu.Lock()
-	ready, v := p.have && p.down == nil, wording.View{Name: p.name()}
+	ready, v := p.have && p.instead() == nil, wording.View{Name: p.name()}
 	p.mu.Unlock()
 	if ready {
 		ctx, cancel := context.WithTimeout(r.Context(), sendFor)

@@ -124,13 +124,16 @@ The agent's log is `C:\ProgramData\Silkpool\logs\agent.log`. Each runner's own l
 
 ## Upgrade it
 
-Upgrade the Hub first, then its nodes. First copy the agent's state folder, with the service stopped, in a PowerShell run as administrator. The copy is a backup for troubleshooting and support. It holds the node's key, so it goes in your own profile, which other accounts can't read, and not elsewhere in `C:\ProgramData`, which every account can:
+Upgrade the Hub first, then its nodes. First copy the agent's state folder, with the service stopped, in a PowerShell run as administrator. The copy is a backup for troubleshooting and support. It holds the node's key, so it goes in your own profile, which other accounts can't read, and not elsewhere in `C:\ProgramData`, which every account can. If an earlier upgrade's copy is still in your profile, delete it first, so the two don't mix:
 
 ```powershell
 Stop-Service Silkpool
-Copy-Item -Recurse 'C:\ProgramData\Silkpool\state' "$HOME\silkpool-state.before-upgrade"
+New-Item -ItemType Directory "$HOME\silkpool-state.before-upgrade" | Out-Null
+Get-ChildItem -Force 'C:\ProgramData\Silkpool\state' | Where-Object Name -ne runner | Copy-Item -Recurse -Destination "$HOME\silkpool-state.before-upgrade"
 Start-Service Silkpool
 ```
+
+The copy leaves out the state folder's `runner` folder. That's the runner application, which only the agent can read, so even an administrator's copy of it fails with "Access is denied". It doesn't belong in the copy: it holds nothing of the node's own, and the node downloads it again when it needs it.
 
 Running jobs carry on while the agent is stopped: each slot's runner is a service of its own. Then run the install command of the Hub's new release, without `-Code`:
 

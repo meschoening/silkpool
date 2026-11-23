@@ -20,6 +20,8 @@ A node's **intent** is what you've asked of it, and it's always one of three:
 
 Pausing never interrupts a job. A paused node shows **Draining** while any slot is still occupied, by a runner finishing its job, one waiting to be retired or one still exiting, and **Drained** once every slot is free. Emergency stop, unlike a pause, cancels the running jobs.
 
+Now and then GitHub refuses to retire an idle runner, saying it's running a job, although none has started. The runner's slot then reads "Retiring the idle runner…", with "GitHub says it's running a job, but none has started · stopping it in 1 min" below. A job GitHub really gave the runner starts within seconds and runs to the end. With none after 2 minutes, the node stops the runner once GitHub refuses again, and reads **Drained**, and the Hub removes the runner from GitHub once GitHub lets it, which took half an hour once. While the node can't reach the Hub, the slot reads "Idle runner, waiting for the Hub" instead.
+
 `silkpool status` shows the node's state, what it's doing, who changed its intent last and how, its slots, its auto-resume and its Hub. `silkpool status --watch` prints it again on every change, until you press Ctrl+C. The tray panel and the node's page show the same, the tray icon's tooltip gives the node's name and state, such as "Silkpool · build-pc · Busy", and the dashboard's **Nodes** page lists every node with what it's doing.
 
 ## Pause

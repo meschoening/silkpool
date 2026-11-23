@@ -298,6 +298,25 @@ var reasonDetails = map[node.Reason]string{
 	node.NoFullDiskAccess:     FullDiskAccess,
 }
 
+// refused is the second line of a runner GitHub refused to delete
+// (422) that has reported no job: GitHub says it has one, and the node
+// stops it once JobWait has passed with none and GitHub refuses again,
+// so after JobWait it says when the node asks again. Otherwise it's
+// empty.
+func (v View) refused(r node.Runner) string {
+	if r.Retirement != node.ClosingAfterJob || r.Job != "" || r.RefusedAt.IsZero() {
+		return ""
+	}
+	const lead = "GitHub says it's running a job, but none has started · "
+	switch left := r.RefusedAt.Add(node.JobWait).Sub(v.Clock.Now); {
+	case left > 0:
+		return lead + "stopping it " + Soon(left)
+	case r.RetireAt.After(v.Clock.Now):
+		return lead + "asking GitHub again " + Soon(r.RetireAt.Sub(v.Clock.Now))
+	}
+	return lead + "asking GitHub now"
+}
+
 // A Row is a slot's row: its number, what it's doing, how long for, and
 // a second line with its repository and qualifiers, or its failure.
 type Row struct {
@@ -359,12 +378,14 @@ func (v View) row(s node.Slot, wanted bool) Row {
 				subs = append(subs, "slot closes after this job")
 			}
 			row.Sub = strings.Join(slices.DeleteFunc(subs, func(s string) bool { return s == "" }), " · ")
-		case r.Retirement == node.Retiring && !n.Connected:
+		case (r.Retirement == node.Retiring || r.Retirement == node.ClosingAfterJob) && !n.Connected:
 			row.Main = "Idle runner, waiting for the Hub"
 		case r.Retirement != node.NotRetiring && closing:
 			row.Main = "Closing this slot…"
+			row.Sub = v.refused(r)
 		case r.Retirement != node.NotRetiring:
 			row.Main = "Retiring the idle runner…"
+			row.Sub = v.refused(r)
 		case r.Listening:
 			row.Main = "Listening for a job"
 		default:

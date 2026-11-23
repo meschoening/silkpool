@@ -47,13 +47,14 @@ func (v View) TrayTooltip() string {
 	return fmt.Sprintf("Silkpool · %s · %s", v.Name, v.State())
 }
 
-// A TrayDown is the tray panel while it can't read the agent, from
-// "Prototype the tray and menu-bar panel" and "Connect the tray app to
-// the agent's control channel": the word its chip and tooltip show
-// beside the dashed ring, which isn't a node state, the sentence and what
-// it means, and the footer's line.
+// A TrayDown is the tray panel when it has no node to show: while it
+// can't read the agent, from "Prototype the tray and menu-bar panel" and
+// "Connect the tray app to the agent's control channel", or while the
+// machine isn't enrolled. It's the word its chip and tooltip show beside
+// the dashed ring, which isn't a node state, the sentence and what it
+// means, a command to run, if there's one, and the footer's line.
 type TrayDown struct {
-	State, Lead, Sub, Foot string
+	State, Lead, Sub, Command, Foot string
 }
 
 // trayHere is the machine as the tray names it.
@@ -101,6 +102,21 @@ func TrayNotTheService(path string) TrayDown {
 func TrayCantAsk(err error) TrayDown {
 	return TrayDown{State: "Can't connect", Lead: Sentence(fmt.Sprintf("couldn't ask Silkpool's service: %v", err)),
 		Sub: trayStuck, Foot: trayChecking}
+}
+
+// TrayNotEnrolled is the panel of a machine that isn't enrolled in a Hub,
+// as `silkpool status` says it: how to enroll it, with the command the
+// Hub's Add node page gives for its OS, and none of the node's controls,
+// which the agent refuses until it's enrolled (#348).
+func TrayNotEnrolled(mac bool) TrayDown {
+	here, os := "This PC", "windows"
+	if mac {
+		here, os = "This Mac", "macos"
+	}
+	c := Shipped.Enroll(os, "<code>")
+	return TrayDown{State: "Not enrolled", Lead: here + " isn't enrolled in a Hub.",
+		Sub: "Enroll it with a code from the Hub's Add node page. " + c.Where + ":", Command: c.Command,
+		Foot: "Shows the node here once it's enrolled"}
 }
 
 // TrayTooltipDown is the tray icon's tooltip while it can't read the

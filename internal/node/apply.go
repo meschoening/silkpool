@@ -170,6 +170,10 @@ func (a *applying) record(e Event) {
 	case JobStarted:
 		if s := a.hosting(e.Runner); s != nil && s.Runner.Job == "" {
 			s.Runner.Listening, s.Runner.Job, s.Runner.JobSince = true, e.Job, a.now
+			if s.Runner.Retirement == ClosingAfterJob {
+				// GitHub's refusal was for this job: no more asking.
+				s.Runner.RetireAt, s.Runner.RefusedAt = time.Time{}, time.Time{}
+			}
 		}
 	case WorkerStarted:
 		if s := a.hosting(e.Runner); s != nil {
@@ -269,20 +273,47 @@ func (a *applying) exited(s *Slot, code int) {
 	a.reset(s)
 }
 
+// retired applies the answer to a request to retire s's runner. A 422
+// for a runner that has reported no job starts its JobWait, while the
+// node asks again, backing off: GitHub answers 422 from the moment it
+// assigns a job (#16), but can also refuse a runner that has none
+// (#349). A 422 that comes once JobWait has passed stops it. Only
+// GitHub's answer through the Hub does, so nothing the agent applies
+// before Started, such as its own answer while it has no link, stops a
+// runner whose job it hasn't told the node of yet. While the Hub can't
+// answer, the runner waits for it, as an idle one being retired does.
 func (a *applying) retired(s *Slot, e Retired) {
 	r := &s.Runner
-	if r.Retirement.signalled() {
+	if r.Retirement.signalled() || r.Retirement == ClosingAfterJob && r.Job != "" {
+		// It's being stopped, or closes after the job it holds.
 		return
 	}
 	switch {
 	case e.Status == 204 || e.Status == 404 && e.TargetVisible:
 		r.Retirement, r.RetireAt, r.KillAt = Stopping, time.Time{}, a.now.Add(KillAfter)
 		a.emit(Interrupt{Slot: s.Number, Runner: r.Name})
-	case e.Status == 422:
+	case e.Status == 422 && r.Job != "":
 		r.Retirement, r.RetireAt = ClosingAfterJob, time.Time{}
-	case r.Retirement == Retiring && r.RetireAt.IsZero():
-		r.RetireAttempts++
-		r.RetireAt = a.now.Add(Backoff(r.RetireAttempts))
+	case e.Status == 422 && r.Retirement != ClosingAfterJob:
+		r.Retirement, r.RefusedAt, r.RetireAttempts = ClosingAfterJob, a.now, 0
+		a.askAgain(r)
+	case e.Status == 422 && r.RetireAt.IsZero() && !a.now.Before(r.RefusedAt.Add(JobWait)):
+		// No job reached it, so GitHub's refusal held none. It's stopped,
+		// and the Hub deletes its registration once GitHub lets go.
+		a.stop(s, Stopping)
+	case (r.Retirement == Retiring || r.Retirement == ClosingAfterJob) && r.RetireAt.IsZero():
+		a.askAgain(r)
+	}
+}
+
+// askAgain schedules r's next request to retire, backing off. One
+// refused with no job is asked again at the end of its JobWait at the
+// latest.
+func (a *applying) askAgain(r *Runner) {
+	r.RetireAttempts++
+	r.RetireAt = a.now.Add(Backoff(r.RetireAttempts))
+	if end := r.RefusedAt.Add(JobWait); r.Retirement == ClosingAfterJob && a.now.Before(end) && end.Before(r.RetireAt) {
+		r.RetireAt = end
 	}
 }
 
@@ -365,6 +396,12 @@ func (a *applying) started(alive []string) {
 			a.reset(s)
 		case r.Retirement == Retiring && r.RetireAt.IsZero():
 			a.emit(RetireRunner{Slot: s.Number, Runner: r.Name})
+		case r.Retirement == ClosingAfterJob && r.Job == "":
+			// Its JobWait starts over, since the agent tells the node of a
+			// job the listener took while it was down only after Started,
+			// and the node asks again.
+			s.Runner.RefusedAt, s.Runner.RetireAt = a.now, time.Time{}
+			a.emit(RetireRunner{Slot: s.Number, Runner: r.Name})
 		case !r.InterruptAt.IsZero():
 			// The stop still holds: the agent reports the worker again if
 			// it's up, and the deadline stands.
@@ -383,8 +420,9 @@ func (a *applying) connected() {
 		if s.Phase == Free && s.Failure.Reason.offHub() {
 			s.Failure.RetryAt = a.now
 		}
-		if s.Phase == Hosting && s.Runner.Retirement == Retiring && !s.Runner.RetireAt.IsZero() {
-			s.Runner.RetireAt = a.now
+		r := &s.Runner
+		if s.Phase == Hosting && (r.Retirement == Retiring || r.Retirement == ClosingAfterJob && r.Job == "") && !r.RetireAt.IsZero() {
+			r.RetireAt = a.now
 		}
 	}
 }
@@ -472,6 +510,12 @@ func (a *applying) settleRunner(s *Slot, wanted bool) {
 	case Retiring:
 		// While a request is out, only its result decides.
 		if !r.RetireAt.IsZero() && !a.now.Before(r.RetireAt) {
+			r.RetireAt = time.Time{}
+			a.emit(RetireRunner{Slot: s.Number, Runner: r.Name})
+		}
+	case ClosingAfterJob:
+		// Until it reports a job, it's asked for again at RetireAt.
+		if r.Job == "" && !r.RetireAt.IsZero() && !a.now.Before(r.RetireAt) {
 			r.RetireAt = time.Time{}
 			a.emit(RetireRunner{Slot: s.Number, Runner: r.Name})
 		}
