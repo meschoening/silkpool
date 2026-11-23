@@ -6,6 +6,7 @@ Silkpool puts spare computers on duty as self-hosted GitHub Actions runners, and
 - [Install a node on Linux](install-node-linux.md)
 - [Install a node on macOS](install-node-macos.md)
 - [Install a node on Windows](install-node-windows.md)
+- [Everyday use of a node](everyday-use.md): pause and resume it, auto-resume, the slot limit and Emergency stop, from the tray app, the CLI or the dashboard
 - [macOS nodes: Full Disk Access](macos-full-disk-access.md): Silkpool needs it to clean up between jobs, and your jobs get it too
 - [Windows nodes: PowerShell's execution policy](windows-execution-policy.md): what to set so your jobs' PowerShell steps run
 - [Windows nodes: Microsoft Defender's exclusions](windows-defender.md): the install step that keeps Defender from quarantining Silkpool, and what it costs

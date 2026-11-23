@@ -28,7 +28,17 @@ To install without enrolling, leave the code out. Then enroll the Mac later with
 sudo silkpool enroll <code>
 ```
 
-A code works once, for 24 hours. The Mac enrolls under its host name, unless you give `--name`. A new node is **Paused indefinitely**, with auto-resume off and one slot. Check its auto-resume and its slot limit, in the tray app or with the CLI, then put it on duty:
+A code works once, for 24 hours. The Mac enrolls under its host name, unless you give `--name`. A new node is **Paused indefinitely**, with auto-resume off and one slot.
+
+A node runs jobs for one **target**: the repository, or the organization's runner group, where its runners register. The Mac enrolls with the Hub's default target. The first target the Hub gets, in the last step of its setup, becomes the default, and `sudo silkpool-hub target default <target>` changes it. A node that enrolls while the Hub has no target has none, and `silkpool resume` refuses it, with "The node has no target: choose a target first." To give it one, finish the Hub's setup, or add a target on the dashboard's **Targets** page, and choose the node's target on its page there, under **Runs jobs for**, or on the Hub's machine:
+
+```sh
+sudo silkpool-hub node set-target <node> <target>
+```
+
+`sudo silkpool-hub target list` lists the Hub's targets.
+
+Check its auto-resume and its slot limit, in the tray app or with the CLI, as [Everyday use](everyday-use.md) says, then put it on duty:
 
 ```sh
 silkpool resume
@@ -63,7 +73,7 @@ Every slot runs its jobs as Silkpool's service account, `_silkpool`: a role acco
 - **No caches are kept on purpose.** Use GitHub's `actions/cache` instead.
 - Silkpool's runners never serve public repositories.
 
-**Emergency stop** stops the node's running jobs. GitHub marks each one failed, and the node stays Paused indefinitely until you resume it.
+**Emergency stop** stops the node's running jobs. GitHub marks each one failed, and the node stays Paused indefinitely until you resume it. [Everyday use](everyday-use.md#emergency-stop) gives it in the tray app, the CLI and the dashboard.
 
 ## The machine's resources
 
@@ -73,7 +83,7 @@ A Mac node has no budget: macOS has no way to bound a group of processes' memory
 
 The agent's log is `/Library/Logs/Silkpool/agent.log`. Each runner's own logs are copied to `/Library/Logs/Silkpool/runners/<runner>/` when its job ends, and kept for 14 days, up to 1 GB in all, for an administrator to read there. The diagnostics report never includes them.
 
-`silkpool diagnostics` prints the node's diagnostics report on the Mac, which works even when the Hub can't reach the node.
+`silkpool diagnostics` prints the node's diagnostics report on the Mac, which works even when the Hub can't reach the node. While the node is connected, its page on the Hub's dashboard shows the same report: choose **Get its report** under Diagnostics. The Hub waits up to 30 seconds for it, and doesn't keep it.
 
 ## Upgrade it
 
@@ -104,7 +114,7 @@ Remove the node from its Hub first:
 sudo silkpool remove
 ```
 
-It waits for running jobs to finish, resets the slots, and leaves the Hub for good. If the Hub is gone, use `sudo silkpool remove --force`, which removes the node on this Mac only, then remove it in the Hub too if you can.
+It waits for running jobs to finish, resets the slots, and leaves the Hub for good. If the Hub is gone, use `sudo silkpool remove --force`, which removes the node on this Mac only, then remove it in the Hub too if you can. `remove` asks before it acts, and so does `remove --force`. Where there's no terminal to ask on, as in a script, give `--yes`: `sudo silkpool remove --yes`.
 
 macOS has no package uninstaller, so Silkpool has its own. macOS lets it delete the service account only from an app with Full Disk Access, so first give Terminal Full Disk Access, in System Settings ▸ Privacy & Security ▸ Full Disk Access, and quit and reopen it. Over SSH, turn on **Allow full disk access for remote users** in System Settings ▸ General ▸ Sharing ▸ Remote Login instead. Then:
 

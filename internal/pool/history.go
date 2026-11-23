@@ -2,6 +2,7 @@ package pool
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/meschoening/silkpool/internal/node"
@@ -110,6 +111,9 @@ const (
 	PruneEvery = 24 * time.Hour
 )
 
+// maxKeepDays is the most days a time.Duration holds, about 292 years.
+const maxKeepDays = int(math.MaxInt64 / int64(24*time.Hour))
+
 // ErrKeepHistory refuses a history setting that keeps less than
 // MinKeepHistory days.
 var ErrKeepHistory = fmt.Errorf("history is kept for %d days or more, or forever", MinKeepHistory)
@@ -138,7 +142,8 @@ func (p Pool) keepDays() int {
 func (p Pool) keep() time.Duration {
 	days := p.keepDays()
 	switch {
-	case days == KeepForever:
+	case days == KeepForever, days > maxKeepDays:
+		// No entry is older than a time.Duration holds.
 		return 0
 	case days < MinKeepHistory:
 		days = MinKeepHistory

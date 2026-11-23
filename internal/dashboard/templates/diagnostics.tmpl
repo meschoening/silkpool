@@ -1,0 +1,25 @@
+{{/* A node's diagnostics report, as the node CLI prints it: the breadcrumb, then each part of the report, then the end of the agent's own log. Or, if there's none, why. The Hub asks the node as the page opens, and keeps nothing, so Ask again asks again. */}}
+{{define "main"}}<div class="page">
+<div class="crumb"><a class="lnk" href="/">Nodes</a> / {{if .Gone}}{{.Name}}{{else}}<a class="lnk" href="{{.Back}}">{{.Name}}</a>{{end}} / Diagnostics</div>
+<div class="nh"><span class="h1">Diagnostics report</span></div>
+<div class="stack">
+{{- if .Refusal}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- else}}
+<p class="meta">{{.Kept}}</p>
+<dl class="kv is-wide">
+{{- range .Parts}}
+<dt>{{.Label}}</dt><dd>{{range .Lines}}<span>{{.}}</span>{{end}}</dd>
+{{- end}}
+</dl>
+<h2 class="h2">{{.LogHeading}}</h2>
+{{- with .Log}}
+<pre class="log">{{range .}}{{.}}
+{{end}}</pre>
+{{- end}}
+{{- end}}
+{{- if not .Gone}}
+<form class="btns" method="get" action="{{.Ask}}"><button class="btn">Ask again</button><a class="lnk" href="{{.Back}}">Back to {{.Name}}</a></form>
+{{- end}}
+</div>
+</div>{{end}}

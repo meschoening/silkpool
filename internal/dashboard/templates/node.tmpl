@@ -1,4 +1,4 @@
-{{/* A node's own page: the breadcrumb and the node's head, then its notices, state, slots and commands on the left, and auto-resume, what it runs jobs for and its removal on the right. Each part is live. A form's refusal shows below its part, where the stream leaves it. */}}
+{{/* A node's own page: the breadcrumb and the node's head, then its notices, state, slots, commands and history on the left, and auto-resume, what it runs jobs for, its diagnostics and its removal on the right. Each part is live. A form's refusal shows below its part, where the stream leaves it. */}}
 {{define "main"}}<div class="page">
 <div class="crumb"><a class="lnk" href="/">Nodes</a> / {{.Node.Name}}</div>
 {{template "node-head" .}}
@@ -8,6 +8,7 @@
 {{- if eq .RefusedIn "commands"}}
 <p class="amber" role="alert">{{.Refusal}}</p>
 {{- end}}
+{{template "node-history" .}}
 </div>
 <div class="col">
 {{template "node-auto-resume" .}}
@@ -18,6 +19,7 @@
 {{- if eq .RefusedIn "settings"}}
 <p class="amber" role="alert">{{.Refusal}}</p>
 {{- end}}
+{{template "node-diagnostics" .}}
 {{template "node-remove" .}}
 {{- if eq .RefusedIn "remove"}}
 <p class="amber" role="alert">{{.Refusal}}</p>
@@ -84,6 +86,15 @@
 {{- end}}
 </div>{{end}}
 
+{{/* The node's history: its newest entries, by day, without its name, starting while it isn't connected with the gap since it was last seen, and a link to the rest in Activity, under its filters. */}}
+{{define "node-history"}}<div class="hist" id="node-history"><div class="row"><h2 class="h2">History</h2><a class="lnk" href="{{.History.All}}">All of {{.Node.Name}}'s history</a></div>
+{{- if .History.Events.Days}}
+{{template "events" .History.Events}}
+{{- else}}
+<p class="meta ev-none">Nothing yet.</p>
+{{- end}}
+</div>{{end}}
+
 {{/* Auto-resume, or its editor while it's open. */}}
 {{define "node-auto-resume"}}<div class="box" id="node-auto-resume">{{if .Editor}}{{template "auto-resume-editor" .Editor}}{{else}}{{template "auto-resume" .Node}}{{end}}</div>{{end}}
 
@@ -109,6 +120,11 @@
 <dt>Jobs use</dt><dd>{{with .RunsOn}}{{template "copy" .}}{{else with .NoRunsOn}}<p class="meta">{{.}}</p>{{else}}<p class="meta">Its runs-on line shows once it has connected.</p>{{end}}</dd>
 <dt>Machine</dt><dd>{{or .Platform "Not connected yet"}}</dd>
 </dl>
+</div>{{end}}
+
+{{/* Asking the node for its diagnostics report, which its own page shows: disabled, saying why, while the node isn't connected. */}}
+{{define "node-diagnostics"}}<div class="box" id="node-diagnostics"><div class="row"><h2 class="h2">Diagnostics</h2><form method="get" action="{{.Diagnostics}}"><button class="btn is-sm"{{if .NoDiagnostics}} disabled{{end}}>Get its report</button></form></div>
+<p class="meta">{{.AboutDiagnostics}}</p>
 </div>{{end}}
 
 {{/* Removing the node from the Hub, behind its confirmation, which says what happens to a connected node and to one that isn't. */}}

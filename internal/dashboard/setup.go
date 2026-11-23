@@ -334,7 +334,8 @@ func (d *Dashboard) appCreated(w http.ResponseWriter, r *http.Request) {
 }
 
 // installed saves the installation GitHub sent the browser back with,
-// after the App was installed or its repositories changed.
+// after the App was installed or its repositories changed: setup's
+// install step, or, once setup is done, a connection's from Settings.
 func (d *Dashboard) installed(w http.ResponseWriter, r *http.Request) {
 	a, err := d.access(r.Context(), r)
 	if err != nil {
@@ -347,13 +348,14 @@ func (d *Dashboard) installed(w http.ResponseWriter, r *http.Request) {
 	}
 	id, perr := strconv.ParseInt(r.URL.Query().Get("installation_id"), 10, 64)
 	if perr != nil {
-		d.stepDone(w, r, refusal("not-installed", "GitHub sent back no installation"), stepBody{})
+		err = refusal("not-installed", "GitHub sent back no installation")
+	}
+	if a.progress.Finished() {
+		d.installedAfterSetup(w, r, a, id, err)
 		return
 	}
-	_, err = d.ops.Install(r.Context(), a.origin(), id)
-	if err == nil && a.progress.Finished() {
-		see(w, r, "/")
-		return
+	if err == nil {
+		_, err = d.ops.Install(r.Context(), a.origin(), id)
 	}
 	d.stepDone(w, r, err, stepBody{})
 }

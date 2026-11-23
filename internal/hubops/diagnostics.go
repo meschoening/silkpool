@@ -3,10 +3,10 @@ package hubops
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/meschoening/silkpool/internal/diagnostics"
+	"github.com/meschoening/silkpool/internal/wording"
 )
 
 // DiagnosticsWithin is how long Diagnostics waits for a node's report.
@@ -16,9 +16,10 @@ const DiagnosticsWithin = 30 * time.Second
 
 // Diagnostics asks the node with id for its diagnostics report and
 // waits for it, at most DiagnosticsWithin, for the dashboard's node page
-// to show and download. It's refused for a node the Hub doesn't hold or
-// has removed, and for one that isn't connected, or whose connection
-// ends before it answers. The Hub doesn't keep the report.
+// to show. It's refused for a node the Hub doesn't hold or has removed
+// (unknown-node), for one that isn't connected, or whose connection ends
+// before it answers (not-connected), and for one that doesn't answer
+// within DiagnosticsWithin (no-answer). The Hub doesn't keep the report.
 func (o *Ops) Diagnostics(ctx context.Context, id string) (diagnostics.Report, error) {
 	h, err := o.state(ctx)
 	if err != nil {
@@ -33,9 +34,10 @@ func (o *Ops) Diagnostics(ctx context.Context, id string) (diagnostics.Report, e
 	r, err := o.c.Hub.Diagnostics(waiting, n.ID)
 	switch {
 	case errors.Is(err, diagnostics.ErrNotConnected):
-		return diagnostics.Report{}, refuse("not-connected", "%s isn't connected, so it can't send its diagnostics report", n.Name)
-	case err != nil && waiting.Err() != nil && ctx.Err() == nil:
-		return diagnostics.Report{}, fmt.Errorf("%s didn't send its diagnostics report within %s", n.Name, DiagnosticsWithin)
+		return diagnostics.Report{}, refuse("not-connected", "%s", wording.DiagnosticsNotConnected(n.Name))
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
+		// The wait ran out, not the caller's.
+		return diagnostics.Report{}, refuse("no-answer", "%s", wording.DiagnosticsNoAnswer(n.Name, DiagnosticsWithin))
 	}
 	return r, err
 }

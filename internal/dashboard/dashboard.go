@@ -106,6 +106,7 @@ func (d *Dashboard) routes() {
 	m.HandleFunc("GET "+hubops.SignInCallbackPath, d.signedIn)
 	m.HandleFunc("POST /sign-out", d.signOut)
 	m.HandleFunc("GET /nodes/{name}", d.node)
+	m.HandleFunc("GET /nodes/{name}/diagnostics", d.diagnostics)
 	m.HandleFunc("POST /nodes/{name}/command", d.command)
 	m.HandleFunc("POST /nodes/{name}/slot-limit", d.slotLimit)
 	m.HandleFunc("POST /nodes/{name}/budget", d.budget)
@@ -124,6 +125,10 @@ func (d *Dashboard) routes() {
 	m.HandleFunc("POST /targets/default", d.defaultTarget)
 	m.HandleFunc("POST /targets/remove", d.removeTarget)
 	m.HandleFunc("POST /targets/pool-label", d.poolLabel)
+	m.HandleFunc("GET /activity", d.activity)
+	m.HandleFunc("GET /settings", d.settings)
+	m.HandleFunc("GET "+hubops.ConnectionCreatedPath, d.connectionCreated)
+	m.HandleFunc("POST /settings/history", d.keepHistory)
 	m.HandleFunc("/", d.notFound)
 	d.mux = m
 }

@@ -33,13 +33,44 @@ To install without enrolling, leave out `-Code` and the code. Then enroll the ma
 silkpool enroll <code>
 ```
 
-A code works once, for 24 hours. The machine enrolls under its host name, unless you give `--name`. A new node is **Paused indefinitely**, with auto-resume off and one slot. Check its auto-resume and its slot limit, in the tray app or with the CLI, then put it on duty:
+A code works once, for 24 hours. The machine enrolls under its host name, unless you give `--name`. A new node is **Paused indefinitely**, with auto-resume off and one slot.
+
+A node runs jobs for one **target**: the repository, or the organization's runner group, where its runners register. The machine enrolls with the Hub's default target. The first target the Hub gets, in the last step of its setup, becomes the default, and `sudo silkpool-hub target default <target>` changes it. A node that enrolls while the Hub has no target has none, and `silkpool resume` refuses it, with "The node has no target: choose a target first." To give it one, finish the Hub's setup, or add a target on the dashboard's **Targets** page, and choose the node's target on its page there, under **Runs jobs for**, or on the Hub's machine:
+
+```sh
+sudo silkpool-hub node set-target <node> <target>
+```
+
+`sudo silkpool-hub target list` lists the Hub's targets.
+
+Check its auto-resume and its slot limit, in the tray app or with the CLI, then put it on duty:
 
 ```powershell
 silkpool resume
 ```
 
 `silkpool status` shows what the node is doing. A PowerShell opened before the install doesn't find `silkpool` yet, so open a new one. Only the machine's administrators can use `silkpool` and the tray app, and `enroll` and `remove` need a PowerShell run as administrator.
+
+## Its first few minutes on duty
+
+As the agent first starts, just after the install, Silkpool works out where its service account can write outside its own folders, and adds the entries that [What it puts on the machine](#what-it-puts-on-the-machine) describes. Until that's done, every slot fails closed, so a node put on duty soon after its install runs no jobs for its first few minutes:
+
+- For the first minute, the node shows Starting, "Getting a runner ready for jobs.", or "Getting runners ready for jobs." with more than one slot, and each slot's row reads "Getting a runner ready…", with "Slot can't start" and its next try below it.
+- After that, the node shows Degraded, "Slot can't start.", and says "The shared places, where the service account can write outside its own folders, are being worked out, which takes a few minutes, and a slot can start once they are." Each slot's row reads "No runner", with its attempt and its next try below it.
+
+The node also downloads GitHub's runner application, once the Hub names its version, whether the node is paused or not. A slot waits for that download too, so it can add to the wait.
+
+It takes a few minutes, and longer on a desktop with many programs installed. Where installers let every account change large folders in Program Files, Silkpool adds an entry to each folder in them: on one such desktop, about 75,000 folders.
+
+It clears by itself, so there's nothing to do. Each slot tries again on its own, at most 5 minutes apart, and once every slot's runner is listening for a job, the node shows Available, "Ready for jobs."
+
+If it doesn't clear, or the node says instead "The last survey couldn't work out where the service account can write outside its own folders", with why, run:
+
+```powershell
+silkpool diagnostics
+```
+
+Its Slots and Exposure lines give each slot's failure in full, its Runner app line whether the runner application is installed, and the end of the report gives the agent's own log's last lines. If the node shows Degraded, "Slot can see files outside its own", the exposure check found something: see [What a slot can and can't do](#what-a-slot-can-and-cant-do).
 
 ## What it puts on the machine
 
@@ -70,7 +101,7 @@ Every slot runs its jobs as Silkpool's service account, `silkpool`: a standard l
 - **No caches are kept on purpose.** Use GitHub's `actions/cache` instead.
 - Silkpool's runners never serve public repositories.
 
-**Emergency stop** stops the node's running jobs. GitHub marks each one failed, and the node stays Paused indefinitely until you resume it.
+**Emergency stop** stops the node's running jobs. GitHub marks each one failed, and the node stays Paused indefinitely until you resume it. [Everyday use](everyday-use.md#emergency-stop) gives it in the tray app, the CLI and the dashboard.
 
 ## The machine's resources
 
@@ -89,7 +120,7 @@ silkpool budget --none
 
 The agent's log is `C:\ProgramData\Silkpool\logs\agent.log`. Each runner's own logs are copied to `C:\ProgramData\Silkpool\logs\runners\<runner>\` when its job ends, and kept for 14 days, up to 1 GB in all, for an administrator to read there. The diagnostics report never includes them.
 
-`silkpool diagnostics` prints the node's diagnostics report on the machine, which works even when the Hub can't reach the node. On Windows it also shows each PowerShell's execution policy.
+`silkpool diagnostics` prints the node's diagnostics report on the machine, which works even when the Hub can't reach the node. On Windows it also shows each PowerShell's execution policy. While the node is connected, its page on the Hub's dashboard shows the same report: choose **Get its report** under Diagnostics. The Hub waits up to 30 seconds for it, and doesn't keep it.
 
 ## Upgrade it
 
@@ -119,8 +150,10 @@ Remove the node from its Hub first, in a PowerShell run as administrator:
 silkpool remove
 ```
 
-It waits for running jobs to finish, resets the slots, and leaves the Hub for good. If the Hub is gone, use `silkpool remove --force`, which removes the node on this machine only, then remove it in the Hub too if you can.
+It waits for running jobs to finish, resets the slots, and leaves the Hub for good. If the Hub is gone, use `silkpool remove --force`, which removes the node on this machine only, then remove it in the Hub too if you can. `remove` asks before it acts, and so does `remove --force`. Where there's no terminal to ask on, as in a script, give `--yes`: `silkpool remove --yes`.
 
 Then uninstall Silkpool from **Settings ▸ Apps ▸ Installed apps ▸ Silkpool**, or with `silkpool uninstall` in a PowerShell run as administrator. That deletes everything Silkpool put on the machine: the service account and its profile, the slots' services, the agent's service, the entries above, `C:\ProgramData\Silkpool` and the programs. It refuses, and changes nothing, while the machine is still enrolled, while a slot's service runs, or while a process still runs as the service account.
+
+Windows can't delete a program that's still running, such as the `silkpool.exe` the uninstall runs from. The uninstall moves each such program into your temporary folder, says where, and marks it for Windows to delete when the machine next starts. `C:\Program Files\Silkpool` itself is gone.
 
 Then remove Defender's exclusions, as [Removing the exclusions](windows-defender.md#removing-the-exclusions) says.

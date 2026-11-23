@@ -130,6 +130,7 @@ func (o *Ops) Targets(ctx context.Context) (TargetList, error) {
 // Available lists what every connection offers as a target, each with
 // the rule that refuses it, if one does: a personal connection's
 // installed repositories by name, and an organization's runner groups.
+// A connection whose App isn't installed yet offers nothing.
 func (o *Ops) Available(ctx context.Context) (Available, error) {
 	h, err := o.state(ctx)
 	if err != nil {
@@ -137,6 +138,10 @@ func (o *Ops) Available(ctx context.Context) (Available, error) {
 	}
 	out := Available{Candidates: []Candidate{}}
 	for _, c := range h.Connections {
+		if c.Installation == 0 {
+			// Its App isn't installed yet, so it offers nothing.
+			continue
+		}
 		cands, err := o.candidates(ctx, h, c)
 		if err != nil {
 			out.Failed = append(out.Failed, Failed{Connection: c.Account, Message: err.Error()})

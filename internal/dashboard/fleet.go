@@ -12,6 +12,7 @@ import (
 
 	"github.com/meschoening/silkpool/internal/availability"
 	"github.com/meschoening/silkpool/internal/hubops"
+	"github.com/meschoening/silkpool/internal/hubstore"
 	"github.com/meschoening/silkpool/internal/node"
 	"github.com/meschoening/silkpool/internal/pool"
 	"github.com/meschoening/silkpool/internal/ui"
@@ -22,7 +23,10 @@ import (
 // The fleet's pages, as variant A of "Prototype the Hub dashboard"
 // has them: Nodes, a table with one row per node, and each node's own
 // page, with its state, slots and commands on the left, and auto-resume,
-// what it runs jobs for and its removal on the right. Both are live:
+// what it runs jobs for, the ask for its diagnostics report
+// (diagnostics.go) and its removal on the right. Nodes ends with the
+// pool's recent activity, and a node's left column with its history
+// (history.go), listed as Activity lists them. Both are live:
 // node reports and command replies push their parts again, and the
 // words that move with the clock, such as the gap between jobs, follow
 // it.
@@ -146,6 +150,8 @@ type nodesPage struct {
 	page
 	Pool string
 	Rows []nodeRow
+	// Recent is the pool's most recent history.
+	Recent events
 }
 
 // A nodeRow is a node's row in the Nodes table.
@@ -183,14 +189,20 @@ func (d *Dashboard) home(w http.ResponseWriter, r *http.Request) {
 		d.failed(w, r, err)
 		return
 	}
-	p := d.nodesPage(f)
+	recent, err := d.ops.Activity(r.Context(), hubstore.HistoryQuery{Limit: recentLimit})
+	if err != nil {
+		d.failed(w, r, err)
+		return
+	}
+	p := d.nodesPage(f, recent)
 	p.Login = a.who.Login
 	d.render(w, r, http.StatusOK, "nodes", p)
 }
 
-// nodesPage builds Nodes from f.
-func (d *Dashboard) nodesPage(f hubops.Fleet) nodesPage {
-	p := nodesPage{page: page{Title: "Nodes", Tab: "nodes", Live: []string{"nodes"}}}
+// nodesPage builds Nodes from f, with recent, the newest page of the
+// pool's history.
+func (d *Dashboard) nodesPage(f hubops.Fleet, recent hubops.Activity) nodesPage {
+	p := nodesPage{page: page{Title: "Nodes", Tab: "nodes", Live: []string{"nodes", "recent"}}, Recent: d.recent(recent)}
 	var views []wording.View
 	for _, det := range f.Nodes {
 		row := d.row(det)
@@ -275,6 +287,13 @@ type nodePage struct {
 	// NoRunsOn says why it has no runs-on line, if it's connected
 	// without one.
 	NoRunsOn string
+	// Diagnostics is the path of its diagnostics report, and
+	// AboutDiagnostics what the report holds, or, while NoDiagnostics
+	// disables the ask, why it can't be asked: it isn't connected.
+	Diagnostics, AboutDiagnostics string
+	NoDiagnostics                 bool
+	// History is its history.
+	History nodeHistory
 	// Refusal is why the last form was refused, shown in the part named
 	// RefusedIn: "commands", "auto-resume", "settings" or "remove".
 	Refusal   string
@@ -331,7 +350,7 @@ func budgetOf(det hubops.Detail, n ui.Node) budgetRow {
 }
 
 // The node page's live parts.
-var nodeParts = []string{"node-head", "node-state", "node-auto-resume", "node-settings", "node-remove"}
+var nodeParts = []string{"node-head", "node-state", "node-history", "node-auto-resume", "node-settings", "node-diagnostics", "node-remove"}
 
 // An answer is what a form's answer adds to the node's page: why it was
 // refused, and the form it was posted from, open as it was.
@@ -367,7 +386,12 @@ func (d *Dashboard) showNode(w http.ResponseWriter, r *http.Request, a access, n
 		d.notFound(w, r)
 		return
 	}
-	p := d.nodePage(f, det, r.URL.Query())
+	hist, err := d.ops.Activity(r.Context(), hubstore.HistoryQuery{Node: det.ID, Limit: historyLimit})
+	if err != nil {
+		d.failed(w, r, err)
+		return
+	}
+	p := d.nodePage(f, det, hist, r.URL.Query())
 	p.Login = a.who.Login
 	p.Refusal, p.RefusedIn = ans.refusal, ans.in
 	if ans.draft != nil {
@@ -382,8 +406,9 @@ func (d *Dashboard) showNode(w http.ResponseWriter, r *http.Request, a access, n
 	d.render(w, r, ans.status, "node", p)
 }
 
-// nodePage builds det's page, with the forms q opens.
-func (d *Dashboard) nodePage(f hubops.Fleet, det hubops.Detail, q url.Values) nodePage {
+// nodePage builds det's page, with hist, the newest page of its
+// history, and the forms q opens.
+func (d *Dashboard) nodePage(f hubops.Fleet, det hubops.Detail, hist hubops.Activity, q url.Values) nodePage {
 	n := d.shown(det, false)
 	status, pending := d.status(n, det.Command)
 	n.Locked = !det.Connected || det.Removing || pending
@@ -397,7 +422,11 @@ func (d *Dashboard) nodePage(f hubops.Fleet, det hubops.Detail, q url.Values) no
 		Jobs:        len(n.RunningJobs()) > 0,
 		StopConfirm: n.StopConfirm(), RemoveConfirm: wording.HubRemoveConfirm(det.Name, det.Connected, n.RunningJobs()),
 		Target: det.Target, Targets: f.Targets, PoolLabel: f.PoolLabel, OS: det.OS, Arch: det.Arch,
-		Labels: det.Labels, RunsOn: det.RunsOn,
+		Labels: det.Labels, RunsOn: det.RunsOn, Diagnostics: diagnosticsPath(det.Name), AboutDiagnostics: wording.DiagnosticsAbout,
+		History: d.nodeHistory(det, hist),
+	}
+	if !det.Connected {
+		p.NoDiagnostics, p.AboutDiagnostics = true, wording.Sentence(wording.DiagnosticsNotConnected(det.Name))
 	}
 	if det.UnknownPlatform {
 		p.NoRunsOn = wording.UnknownRunsOn

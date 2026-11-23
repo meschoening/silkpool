@@ -278,6 +278,17 @@ func (h *Hub) History(ctx context.Context) ([]hubstore.HistoryEntry, error) {
 	return entries, err
 }
 
+// HistoryPage returns the page of the Hub's history q picks, newest
+// first, read on the loop's goroutine.
+func (h *Hub) HistoryPage(ctx context.Context, q hubstore.HistoryQuery) (hubstore.HistoryPage, error) {
+	var page hubstore.HistoryPage
+	var err error
+	if !h.query(ctx, func() { page, err = h.store.HistoryPage(q) }) {
+		return hubstore.HistoryPage{}, ErrStopped
+	}
+	return page, err
+}
+
 // apply applies e through the store, then carries out its effects, and
 // returns them. A store error ends the service.
 func (h *Hub) apply(e hubstore.Event) []hubstore.Effect { return h.applyThen(e, nil) }

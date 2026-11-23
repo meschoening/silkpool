@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/meschoening/silkpool/internal/hubops"
+	"github.com/meschoening/silkpool/internal/hubstore"
 	"github.com/meschoening/silkpool/internal/node"
 	"github.com/meschoening/silkpool/internal/secret"
 )
@@ -57,12 +58,14 @@ type sessions struct {
 	m   map[[sha256.Size]byte]session
 }
 
-// A session is who signed in, when the session ends, and the
-// enrollment code it made last.
+// A session is who signed in, when the session ends, the enrollment
+// code it made last, and the account of the GitHub connection it's
+// adding, whose App GitHub is making.
 type session struct {
 	hubops.SignedIn
-	ends time.Time
-	made madeCode
+	ends       time.Time
+	made       madeCode
+	connecting hubstore.Account
 }
 
 // A madeCode is an enrollment code a session made, by its ID, with its
@@ -112,10 +115,21 @@ func (s *sessions) get(token secret.Value) (session, bool) {
 
 // keep keeps c as the code the session of token made last.
 func (s *sessions) keep(token secret.Value, c madeCode) {
+	s.change(token, func(v *session) { v.made = c })
+}
+
+// connect keeps a as the account of the connection the session of
+// token is adding, or forgets it, if a is zero.
+func (s *sessions) connect(token secret.Value, a hubstore.Account) {
+	s.change(token, func(v *session) { v.connecting = a })
+}
+
+// change changes the session of token by f, if it's open.
+func (s *sessions) change(token secret.Value, f func(*session)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if v, ok := s.m[tokenKey(token)]; ok {
-		v.made = c
+		f(&v)
 		s.m[tokenKey(token)] = v
 	}
 }
@@ -137,8 +151,10 @@ type access struct {
 	// reassign reports one whose sign-in reassigns the operator.
 	code     secret.Value
 	reassign bool
-	// made is the enrollment code the session made last, if any.
-	made madeCode
+	// made is the enrollment code the session made last, if any, and
+	// connecting the account of the connection it's adding.
+	made       madeCode
+	connecting hubstore.Account
 }
 
 // signedIn reports a request from the operator, signed in.
@@ -163,7 +179,7 @@ func (d *Dashboard) access(ctx context.Context, r *http.Request) (access, error)
 	}
 	a := access{progress: p}
 	if s, ok := d.sessions.get(cookie(r, sessionCookie)); ok && p.Operator != 0 && s.ID == p.Operator {
-		a.who, a.made = s.SignedIn, s.made
+		a.who, a.made, a.connecting = s.SignedIn, s.made, s.connecting
 	}
 	if code := cookie(r, setupCookie); code.Reveal() != "" {
 		if reassign, err := d.ops.SetupCodeOpens(ctx, code); err == nil {

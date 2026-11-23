@@ -199,6 +199,7 @@ fieldset.ed-r > legend { position: absolute; left: 0; top: 50%; transform: trans
 .opt:has(input:disabled) { cursor: default; }
 .opt:has(input:disabled) > * { opacity: .5; }
 .opt .inp { display: block; margin-top: 6px; width: 220px; }
+.opt .inp.is-days { display: inline-block; margin: 0 4px; width: 72px; }
 .opt .meta { display: block; }
 .opt-t { font-weight: 500; }
 .checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
@@ -257,6 +258,12 @@ fieldset.ed-r > legend { position: absolute; left: 0; top: 50%; transform: trans
 .labels { gap: 4px; }
 .mark.is-own { color: var(--ink); gap: 4px; }
 .mark .lnk { font-size: 12px; line-height: 1; }
+/* A node's diagnostics report: its parts, text rows under a wider
+   label, then the end of the agent's log, wrapped rather than scrolled. */
+.kv.is-wide { grid-template-columns: 96px minmax(0, 1fr); }
+.kv.is-wide dt { line-height: 18px; }
+.kv.is-wide dd { min-height: 0; gap: 2px; overflow-wrap: anywhere; }
+.log { margin: 0; padding: 10px 12px; border-radius: 7px; background: var(--fill); font-family: var(--mono); font-size: 12px; line-height: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Add node. */
 .os { margin-top: 8px; }
@@ -277,8 +284,34 @@ fieldset.ed-r > legend { position: absolute; left: 0; top: 50%; transform: trans
 .lines { display: grid; gap: 4px; margin-top: 8px; }
 .adder { display: grid; gap: 10px; padding: 12px 0; border-top: 1px solid var(--hairline-2); }
 
+/* Activity: history, newest first, by day. Each entry has its time,
+   with the late mark, its node, then what happened and its origin. */
+.filters { flex-wrap: wrap; margin-bottom: 6px; }
+.evs { list-style: none; margin: 0; padding: 0; }
+.ev { display: grid; grid-template-columns: 76px 112px minmax(0, 1fr); gap: 10px; padding: 7px 0; border-top: 1px solid var(--hairline-2); align-items: baseline; }
+.ev time { color: var(--tertiary); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ev-late { color: var(--secondary); cursor: help; }
+.ev-n { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.ev-n a { text-decoration: none; }
+.ev-t { min-width: 0; overflow-wrap: anywhere; }
+.ev-o { color: var(--secondary); font-size: 12px; }
+.ev-d { display: block; margin-top: 2px; color: var(--secondary); font-size: 12px; }
+.ev.is-amber .ev-x { color: var(--amber); }
+.ev.is-red .ev-x { color: var(--red); }
+.ev-day { padding: 14px 0 4px; color: var(--secondary); font-size: 12px; font-weight: 500; }
+.ev-none { padding: 14px 0; }
+.older { margin-top: 12px; gap: 14px; }
+/* One node's history leaves out the node. Nodes ends with the pool's
+   recent activity, and a node's left column with its history. */
+.evs.is-bare .ev { grid-template-columns: 76px minmax(0, 1fr); }
+.recent { max-width: 760px; }
+.recent > .row { margin-top: 28px; }
+.hist { margin-top: 14px; }
+
 @media (max-width: 860px) {
   .cols { grid-template-columns: minmax(0, 1fr); }
   .page { padding: 16px 16px 96px; }
   .fleet th:nth-child(5), .fleet td:nth-child(5), .fleet th:nth-child(6), .fleet td:nth-child(6) { display: none; }
+  .ev { grid-template-columns: 64px minmax(0, 1fr); row-gap: 0; }
+  .ev .ev-n, .ev .ev-t { grid-column: 2; }
 }

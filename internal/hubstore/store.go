@@ -1,7 +1,6 @@
 package hubstore
 
 import (
-	"database/sql"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -423,23 +422,10 @@ type HistoryEntry struct {
 // History returns the Hub's history, oldest first. It's the one thing
 // read from the database while the Hub runs.
 func (s *Store) History() ([]HistoryEntry, error) {
-	rows, err := s.db.Query(`SELECT id, node, origin, body FROM history ORDER BY id`)
-	if err != nil {
-		return nil, fmt.Errorf("reading history from %s: %w", s.db.Path(), err)
-	}
-	defer rows.Close()
+	rows, err := s.readHistory(`SELECT id, at, node, origin, body FROM history ORDER BY id`)
 	var out []HistoryEntry
-	for rows.Next() {
-		var h HistoryEntry
-		var id, origin sql.NullString
-		var body string
-		if err := rows.Scan(&h.ID, &id, &origin, &body); err != nil {
-			return nil, fmt.Errorf("reading history from %s: %w", s.db.Path(), err)
-		}
-		if h.Entry, err = decodeEntry(id.String, origin.String, body); err != nil {
-			return nil, fmt.Errorf("reading history entry %d from %s: %w", h.ID, s.db.Path(), err)
-		}
-		out = append(out, h)
+	for _, r := range rows {
+		out = append(out, r.HistoryEntry)
 	}
-	return out, rows.Err()
+	return out, err
 }

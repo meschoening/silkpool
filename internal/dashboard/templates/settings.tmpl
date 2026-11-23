@@ -1,0 +1,68 @@
+{{/* Settings: the GitHub connections, each with its account, kind, App and installation, and Install until it's installed; "Add a GitHub connection…", open at the account or at the App's manifest; then "Keep history for N days"; then the Hub. A refusal shows where its form is. */}}
+{{define "main"}}<div class="page">
+<div class="head"><div><h1 class="h1">Settings</h1></div></div>
+<div class="wide">
+<h2 class="h2">GitHub connections</h2>
+<ul class="tgs">
+{{- range .Connections}}
+<li class="tg" data-account="{{.Account}}">
+<div class="row"><span><b>{{.Account}}</b>{{if .SignIn}} <span class="mark">Sign-in</span>{{end}}</span><a class="lnk" href="{{.AppPage}}">App settings on GitHub ↗</a></div>
+<p class="meta">{{.Meta}}</p>
+{{- if .InstallLink}}
+{{- if .Organization}}
+<p>Install the App on {{.Account}}. Organization runners serve whatever their runner group allows, whichever repositories the installation includes.</p>
+{{- else}}
+<p>Install the App on {{.Account}}. Choose <b>Only select repositories</b>, and pick the private repositories Silkpool may serve.</p>
+{{- end}}
+<div class="btns"><a class="btn is-primary" href="{{.InstallLink}}">Install on GitHub ↗</a></div>
+{{- end}}
+</li>
+{{- end}}
+</ul>
+{{- if eq .Connect "account"}}
+<form class="adder" method="get" action="/settings">
+<p class="h2">Add a GitHub connection</p>
+<div class="opts">
+<label class="opt"><input type="radio" name="connect" value="personal"{{if eq .Kind "personal"}} checked{{end}}{{if .HasPersonal}} disabled{{end}} required><span><span class="opt-t">My personal account{{if .HasPersonal}} (connected already){{end}}</span><span class="meta">Runners register on your repositories. The App asks for Administration: write, Actions: read and Metadata: read.</span></span></label>
+<label class="opt"><input type="radio" name="connect" value="organization"{{if eq .Kind "organization"}} checked{{end}}><span><span class="opt-t">An organization</span><span class="meta">Runners register in one of its runner groups. The App asks for Self-hosted runners: write, Actions: read and Metadata: read.</span><input class="inp" name="org" value="{{.Org}}" placeholder="Its name on GitHub" aria-label="The organization's name on GitHub" autocomplete="off" spellcheck="false"></span></label>
+</div>
+{{- if eq .RefusedIn "connect"}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- end}}
+<div class="btns"><a class="btn" href="/settings">Cancel</a><button class="btn is-primary">Continue</button></div>
+</form>
+{{- else if eq .Connect "app"}}
+<div class="adder">
+<p class="h2">Add a GitHub connection to {{.Account}}</p>
+<p>GitHub opens a form for a private App named <b>{{.Manifest.Name}}</b>, filled in by the Hub. You can rename it there. Its webhook stays off: the Hub polls GitHub instead. You keep signing in through your first connection's App.</p>
+<div class="btns"><a class="btn" href="/settings">Cancel</a><form method="post" action="{{.Manifest.Form}}"><input type="hidden" name="manifest" value="{{.Manifest.JSON}}"><button class="btn is-primary">Create on GitHub ↗</button></form></div>
+</div>
+{{- else}}
+<div class="adder"><a class="lnk is-ink" href="/settings?connect">Add a GitHub connection…</a>
+{{- if eq .RefusedIn "connect"}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- end}}
+</div>
+{{- end}}
+<p class="meta">Each connection is a private GitHub App, installed only on the account that owns it: your personal account, or one organization.</p>
+<h2 class="h2 sec">History</h2>
+<form class="adder" method="post" action="/settings/history" novalidate>
+<div class="opts">
+<label class="opt"><input type="radio" name="keep" value="days"{{if not .Forever}} checked{{end}} required><span><span class="opt-t">Keep history for <input class="inp is-days" type="number" name="days" value="{{.Days}}" aria-label="Days of history to keep" autocomplete="off"> days</span><span class="meta">At least 7 days. Each day, the Hub drops older entries, removed nodes' included.</span></span></label>
+<label class="opt"><input type="radio" name="keep" value="forever"{{if .Forever}} checked{{end}}><span><span class="opt-t">Keep history forever</span></span></label>
+</div>
+{{- if eq .RefusedIn "history"}}
+<p class="amber" role="alert">{{.Refusal}}</p>
+{{- end}}
+<div class="btns"><button class="btn is-primary">Save</button></div>
+</form>
+<h2 class="h2 sec">Hub</h2>
+<dl class="kv">
+<dt>Address</dt><dd>{{.Hub.Address}}</dd>
+<dt>Listener</dt><dd>{{.Hub.Listener}}</dd>
+<dt>Version</dt><dd>{{.Hub.Version}}</dd>
+<dt>Operator</dt><dd>{{.Hub.Operator}}</dd>
+</dl>
+</div>
+</div>{{end}}
+

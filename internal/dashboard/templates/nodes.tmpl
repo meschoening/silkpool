@@ -1,8 +1,11 @@
-{{/* Nodes, the fleet view. */}}
-{{define "main"}}{{template "nodes" .}}{{end}}
+{{/* Nodes, the fleet view, then the pool's recent activity. */}}
+{{define "main"}}<div class="page">
+{{template "nodes" .}}
+{{template "recent" .}}
+</div>{{end}}
 
 {{/* The fleet, the page's live part: the header, with the pool in a sentence and Add node, then a hairline table with a row per node, or the empty pool's way to enroll the first. A Degraded row has the amber rule; a node that isn't connected is greyed, with its last state's word and the dashed glyph. */}}
-{{define "nodes"}}<div class="page" id="nodes">
+{{define "nodes"}}<div id="nodes">
 <div class="head"><div><h1 class="h1">Nodes</h1>{{with .Rows}}<p class="meta">{{nodes (len .)}} · {{$.Pool}}</p>{{end}}</div><a class="btn is-primary" href="/nodes/add">Add node</a></div>
 {{- if .Rows}}
 <table class="fleet">
@@ -22,6 +25,18 @@
 </table>
 {{- else}}
 <div class="empty"><p class="lead">No nodes yet.</p><p class="sub">Enroll a machine to give the pool work. It joins paused, so nothing runs until you resume it.</p><div class="btns"><a class="btn is-primary" href="/nodes/add">Add node</a></div></div>
+{{- end}}
+</div>{{end}}
+
+{{/* The pool's recent activity, the page's other live part: its newest entries, as Activity lists them, and a link to Activity. An empty pool shows none, leaving the way to enroll the first node. */}}
+{{define "recent"}}<div class="recent" id="recent">
+{{- if .Rows}}
+<div class="row"><h2 class="h2">Recent activity</h2><a class="lnk" href="/activity">All activity</a></div>
+{{- if .Recent.Days}}
+{{template "events" .Recent}}
+{{- else}}
+<p class="meta ev-none">Nothing yet.</p>
+{{- end}}
 {{- end}}
 </div>{{end}}
 

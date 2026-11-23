@@ -38,6 +38,8 @@ sudo silkpool-hub init --url https://hub.example.com
 
 It prints a setup link. Open it in your browser to finish setting the Hub up, which connects it to GitHub. The link works until you sign in, or for 24 hours. For a fresh one, run `sudo silkpool-hub setup-code`.
 
+Setup's last step adds the Hub's first **target**: the repository, or the organization's runner group, where its nodes' runners register. It becomes the Hub's default target, which each node that enrolls after that starts with, so finish setup before you enroll them. A node that enrolled before has no target, and can't resume until you choose one for it.
+
 The Hub serves your nodes and its dashboard on one listener, in one of three ways.
 
 ### Self-signed (the default)
@@ -81,9 +83,13 @@ The Hub can listen on port 443 without running as root: its service holds only t
 
 The Hub keeps its GitHub Apps' private keys in its state folder, which only its own account can open. A job on a node that shares the Hub's machine runs in a slot that can't see that folder. What isn't defended is a local privilege-escalation exploit on that machine: one that reaches root reaches the Apps' keys.
 
-A machine that's both the Hub and a node installs both packages, `silkpool-hub` and `silkpool`, which share nothing. See [Install a node on Linux](install-node-linux.md).
+A machine that's both the Hub and a node installs both packages, `silkpool-hub` and `silkpool`, which share nothing. See [Install a node on Linux](install-node-linux.md), and [Everyday use of a node](everyday-use.md) for pausing and resuming it.
 
-The Hub keeps 90 days of history by default.
+The Hub keeps 90 days of history by default. The dashboard's **Activity** page lists it, newest first, with filters for commands, problems, jobs, settings and connections. An entry marked ↓ is one a node reported after it reconnected, shown at the time it happened. The **Nodes** page ends with the pool's six most recent entries, and each node's page lists its own history. While a node isn't connected, its history holds a "Not connected since" line at the time the Hub last heard from it. Its **All of … history** link opens Activity on that node alone, under the same filters. To keep more or less, at least 7 days, or to keep it forever, change **History** on the dashboard's Settings page. The change is in history itself, and each day the Hub drops what's older.
+
+## Another GitHub connection
+
+Each GitHub connection is a private GitHub App, which can be installed only on the account that owns it. So to serve both your personal repositories and an organization's runner group, or two organizations, the Hub needs a connection for each. On the dashboard's Settings page, choose **Add a GitHub connection…**, then your personal account or the organization. GitHub creates the new App from the Hub's form, as in setup, and the Hub lists it until you install it with **Install on GitHub**. Then add its target. You keep signing in through the App setup made. A Hub holds one personal connection, and one connection per organization.
 
 ## Upgrade it
 

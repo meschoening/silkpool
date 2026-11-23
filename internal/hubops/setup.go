@@ -171,24 +171,36 @@ var githubLogin = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-[A-Za-z0-9]){0
 func (o *Ops) ChooseAccount(ctx context.Context, from node.Origin, kind hubstore.Kind, org string) error {
 	o.changing.Lock()
 	defer o.changing.Unlock()
-	org = strings.TrimSpace(org)
 	_, err := o.changeSettings(ctx, from, func(s *hubstore.Settings) error {
 		if s.Setup != hubstore.StepChecks && s.Setup != hubstore.StepAccount {
 			return errStep(hubstore.Hub{Settings: *s})
 		}
-		switch {
-		case kind == hubstore.Personal:
-			org = ""
-		case kind != hubstore.Organization:
-			return refuse("invalid-account", "choose your personal account or an organization")
-		case !githubLogin.MatchString(org):
-			return refuse("invalid-account", "%q isn't an organization's name on GitHub: write it as its URL has it, github.com/<name>", org)
+		a, err := checkAccount(kind, org)
+		if err != nil {
+			return err
 		}
-		s.Connecting = hubstore.Account{Kind: kind, Login: org}
+		s.Connecting = a
 		s.Setup = hubstore.StepAccount
 		return nil
 	})
 	return err
+}
+
+// checkAccount returns the account of kind a connection's App is made
+// for: the personal account, whose login comes with its App, or the
+// organization org. It refuses any other kind, and an organization's
+// name GitHub can't have.
+func checkAccount(kind hubstore.Kind, org string) (hubstore.Account, error) {
+	org = strings.TrimSpace(org)
+	switch {
+	case kind == hubstore.Personal:
+		return hubstore.Account{Kind: kind}, nil
+	case kind != hubstore.Organization:
+		return hubstore.Account{}, refuse("invalid-account", "choose your personal account or an organization")
+	case !githubLogin.MatchString(org):
+		return hubstore.Account{}, refuse("invalid-account", "%q isn't an organization's name on GitHub: write it as its URL has it, github.com/<name>", org)
+	}
+	return hubstore.Account{Kind: kind, Login: org}, nil
 }
 
 // A Manifest is the App manifest the browser posts to GitHub, as the
@@ -223,7 +235,13 @@ func (o *Ops) Manifest(ctx context.Context, state string) (Manifest, error) {
 	if h.Settings.Setup != hubstore.StepAccount {
 		return Manifest{}, errStep(h)
 	}
-	base, a := h.Settings.BaseURL, h.Settings.Connecting
+	return o.manifest(h.Settings.BaseURL, h.Settings.Connecting, AppCreatedPath, state)
+}
+
+// manifest returns the manifest of the App for the account a, on the
+// Hub at base, which GitHub sends the browser back from to redirect,
+// with state.
+func (o *Ops) manifest(base string, a hubstore.Account, redirect, state string) (Manifest, error) {
 	org := a.Kind == hubstore.Organization
 	form := o.web() + "/settings/apps/new"
 	name := "Silkpool " + hostLabel(base)
@@ -247,7 +265,7 @@ func (o *Ops) Manifest(ctx context.Context, state string) (Manifest, error) {
 		Hook          hook              `json:"hook_attributes"`
 		Permissions   map[string]string `json:"default_permissions"`
 	}{
-		Name: name, URL: base, RedirectURL: base + AppCreatedPath,
+		Name: name, URL: base, RedirectURL: base + redirect,
 		CallbackURLs: []string{base + SignInCallbackPath}, SetupURL: base + InstalledPath, SetupOnUpdate: true,
 		Hook: hook{URL: base}, Permissions: github.Permissions(org),
 	})
@@ -292,16 +310,12 @@ func (o *Ops) CreateApp(ctx context.Context, from node.Origin, code string) (hub
 	if h.Settings.Setup != hubstore.StepAccount {
 		return hubstore.Connection{}, errStep(h)
 	}
-	c, owner, err := o.c.GitHub.CreateApp(ctx, code)
+	c, owner, err := o.createApp(ctx, code)
 	if err != nil {
-		if github.Status(err) == http.StatusNotFound {
-			return hubstore.Connection{}, refuse("app-code", "GitHub doesn't know the code it sent back, or it was used: create the App again")
-		}
 		return hubstore.Connection{}, err
 	}
-	want := h.Settings.Connecting
-	if owner.Organization != (want.Kind == hubstore.Organization) || want.Kind == hubstore.Organization && !strings.EqualFold(owner.Login, want.Login) {
-		return hubstore.Connection{}, refuse("wrong-account", "GitHub created the App %s for %s, not for the account you chose: delete it in its settings on GitHub, then create it again", c.AppSlug, owner.Login)
+	if err := checkOwner(c, owner, h.Settings.Connecting); err != nil {
+		return hubstore.Connection{}, err
 	}
 	if err := o.apply(ctx, hubstore.PutConnection{Connection: c, Origin: from}); err != nil {
 		return hubstore.Connection{}, err
@@ -311,6 +325,26 @@ func (o *Ops) CreateApp(ctx context.Context, from node.Origin, code string) (hub
 		return advance(hubstore.StepCreateApp)(s)
 	})
 	return c, err
+}
+
+// createApp converts the code GitHub sent the browser back with into
+// the new App's credentials, refusing a code GitHub doesn't know.
+func (o *Ops) createApp(ctx context.Context, code string) (hubstore.Connection, github.Account, error) {
+	c, owner, err := o.c.GitHub.CreateApp(ctx, code)
+	if github.Status(err) == http.StatusNotFound {
+		return hubstore.Connection{}, github.Account{}, refuse("app-code", "GitHub doesn't know the code it sent back, or it was used: create the App again")
+	}
+	return c, owner, err
+}
+
+// checkOwner refuses c, an App GitHub created for owner, unless owner
+// is the account want: the operator's personal account, whichever login
+// it has, or the organization want names.
+func checkOwner(c hubstore.Connection, owner github.Account, want hubstore.Account) error {
+	if owner.Organization != (want.Kind == hubstore.Organization) || want.Kind == hubstore.Organization && !strings.EqualFold(owner.Login, want.Login) {
+		return refuse("wrong-account", "GitHub created the App %s for %s, not for the account you chose: delete it in its settings on GitHub, then create it again", c.AppSlug, owner.Login)
+	}
+	return nil
 }
 
 // SignInLink returns where the browser goes to sign in through the

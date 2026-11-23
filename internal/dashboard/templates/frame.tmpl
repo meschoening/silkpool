@@ -36,3 +36,13 @@
 
 {{/* A line to copy, such as a runs-on line or a command: the text, and Copy, which the live-update script copies it with. */}}
 {{define "copy"}}<div class="copy"><span>{{.}}</span><button class="btn is-sm" type="button" data-copy="{{.}}">Copy</button></div>{{end}}
+
+{{/* History's entries, by day: each day's heading, then its entries, each with its time, its node, unless the list is bare, being one node's, what happened and its origin, and a line that follows. An entry a node reported late carries the ↓ mark; a Degraded episode's start is amber, and Emergency stop red. Activity, a node's page and Nodes list history with it. */}}
+{{define "events"}}<ul class="evs{{if .Bare}} is-bare{{end}}">
+{{- range .Days}}
+<li class="ev-day" data-key="{{.Key}}">{{.Title}}</li>
+{{- range .Entries}}
+<li class="ev{{with .Tone}} is-{{.}}{{end}}" data-key="{{.Key}}"><time datetime="{{.At}}">{{.Time}}{{with .Late}}<span class="ev-late" title="{{.}}"> ↓</span>{{end}}</time>{{if not $.Bare}}<span class="ev-n">{{if .Path}}<a href="{{.Path}}">{{.Node}}</a>{{else if .Node}}{{.Node}}{{else}}<span class="faint">Hub</span>{{end}}</span>{{end}}<span class="ev-t"><span class="ev-x">{{.Text}}</span>{{with .From}} <span class="ev-o">{{.}}</span>{{end}}{{with .Link}} <a class="lnk" href="{{.}}" rel="noreferrer">View run ↗</a>{{end}}{{with .Detail}}<span class="ev-d">{{.}}</span>{{end}}</span></li>
+{{- end}}
+{{- end}}
+</ul>{{end}}

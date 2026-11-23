@@ -1,0 +1,20 @@
+{{/* Activity: every entry of the Hub's history, or one node's, newest first and grouped by day, under a filter. The list is the page's live part, ending with a link to older entries. */}}
+{{define "main"}}<div class="page">
+<div class="head"><div><h1 class="h1">Activity</h1>
+{{- if .Node}}<p class="meta">{{.Node}}'s commands, problems, jobs, settings and connections, newest first. ↓ marks an entry it reported after it reconnected. <a class="lnk" href="{{.Every}}">Every node's</a></p>
+{{- else}}<p class="meta">Commands, problems, jobs, settings and connections, newest first. ↓ marks an entry a node reported after it reconnected.</p>{{end}}</div></div>
+<nav class="tabs filters" aria-label="Filter">{{range .Filters}}<a href="{{.Path}}"{{if .On}} aria-current="page"{{end}}>{{.Title}}</a>{{end}}</nav>
+{{template "activity" .}}
+</div>{{end}}
+
+{{/* The list, the page's live part: each day's entries, or what an empty list says, then links to older and newer pages. */}}
+{{define "activity"}}<div class="wide" id="activity">
+{{- if .Events.Days}}
+{{template "events" .Events}}
+{{- else}}
+<p class="meta ev-none">{{.Empty}}</p>
+{{- end}}
+{{- if or .Older .Newest}}
+<div class="btns older">{{with .Newest}}<a class="lnk" href="{{.}}">Newest</a>{{end}}{{with .Older}}<a class="lnk is-ink" href="{{.}}">Older entries</a>{{end}}</div>
+{{- end}}
+</div>{{end}}

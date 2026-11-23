@@ -12,7 +12,7 @@ import (
 )
 
 // The diagnostics report's words, which the node CLI prints and the
-// dashboard's node page will show. No decision gives them, so they
+// dashboard's node page shows. No decision gives them, so they
 // follow the CLI's status. Times are the report's own UTC stamps, since
 // a report is passed on, to whoever helps with the machine.
 
@@ -44,6 +44,29 @@ func Diagnostics(r diagnostics.Report) []Part {
 		parts = append(parts, Part{"PowerShell", powerShell(r.PowerShell)})
 	}
 	return parts
+}
+
+// DiagnosticsAbout says, on a node's dashboard page, what its
+// diagnostics report holds.
+const DiagnosticsAbout = "Its versions, slots, recent failures and the end of its own log, with secrets taken out. It never holds a runner's logs."
+
+// DiagnosticsKept says, over a report on the dashboard, that the Hub
+// doesn't keep it.
+const DiagnosticsKept = "The Hub doesn't keep the report: ask again for a newer one."
+
+// DiagnosticsNotConnected says why the node named name can't be asked
+// for its diagnostics report: "not connected, so build-box can't send its
+// diagnostics report". The Hub refuses the ask with it, and the node's
+// page says it where the ask is disabled. Neither starts with the name,
+// whose case a sentence keeps.
+func DiagnosticsNotConnected(name string) string {
+	return "not connected, so " + name + " can't send its diagnostics report"
+}
+
+// DiagnosticsNoAnswer says the node named name didn't send its report
+// within within: "no diagnostics report came from build-box within 30 s".
+func DiagnosticsNoAnswer(name string, within time.Duration) string {
+	return fmt.Sprintf("no diagnostics report came from %s within %d s", name, int(within.Round(time.Second)/time.Second))
 }
 
 // LogHeading heads the end of the agent's own log, of lines lines: "The

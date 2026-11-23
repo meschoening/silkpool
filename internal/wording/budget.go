@@ -57,11 +57,16 @@ func gbs(bytes int64) string { return fmt.Sprintf("%d GB", bytes/availability.GB
 // entry and the name of the node's machine: "Budget set to 4 GB memory ·
 // 2 CPUs from the dashboard by meschoening".
 func BudgetSet(c node.AppliedCommand, name string) string {
-	to := BudgetHalves(c.Budget)
-	if c.Budget == (availability.Budget{}) {
-		to = "none"
+	return fmt.Sprintf("Budget set to %s %s", budgetTo(c.Budget), From(c.Origin, name))
+}
+
+// budgetTo is the budget a SetBudget left, in words: "4 GB memory · 2
+// CPUs", or "none".
+func budgetTo(b availability.Budget) string {
+	if b == (availability.Budget{}) {
+		return "none"
 	}
-	return fmt.Sprintf("Budget set to %s %s", to, From(c.Origin, name))
+	return BudgetHalves(b)
 }
 
 // OutOfMemory is the line a job's entry adds when the OS ended one of

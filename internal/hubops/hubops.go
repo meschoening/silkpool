@@ -45,6 +45,9 @@ type Hub interface {
 	Apply(ctx context.Context, e hubstore.Event) ([]hubstore.Effect, error)
 	// State returns the Hub's state as of its latest commit.
 	State(ctx context.Context) (hubstore.Hub, error)
+	// HistoryPage returns the page of the Hub's history q picks, newest
+	// first.
+	HistoryPage(ctx context.Context, q hubstore.HistoryQuery) (hubstore.HistoryPage, error)
 	// Diagnostics asks a connected node for its diagnostics report, and
 	// waits for it. A node that isn't connected, or whose connection
 	// ends first, fails with diagnostics.ErrNotConnected.
@@ -175,6 +178,8 @@ func refusalOf(reason error) *Refusal {
 		return &Refusal{Code: "target-in-use", Message: reason.Error()}
 	case errors.Is(reason, node.ErrNoBudget):
 		return &Refusal{Code: "no-budget", Message: reason.Error()}
+	case errors.Is(reason, pool.ErrKeepHistory):
+		return &Refusal{Code: "invalid-keep-history", Message: reason.Error()}
 	}
 	return &Refusal{Code: "refused", Message: reason.Error()}
 }
