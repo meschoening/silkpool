@@ -24,7 +24,8 @@ import (
 
 	// The pure-Go SQLite driver, registered as "sqlite": Silkpool builds
 	// without cgo.
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // A Migration moves a database from the schema version before it to its
@@ -49,18 +50,88 @@ func (e TooNew) Error() string {
 		e.Path, e.Version, e.Supported, e.Fix)
 }
 
-// Unusable refuses a database that can't be read, or that fails SQLite's
-// quick_check. Nothing repairs or resets it.
+// Unusable refuses a database that SQLite finds corrupt, or that isn't
+// a database at all. Nothing repairs or resets it.
 type Unusable struct {
 	Path string
 	Err  error
 }
 
 func (e Unusable) Error() string {
-	return fmt.Sprintf("the database %s is corrupt or unreadable, and Silkpool won't repair or reset it: %v", e.Path, e.Err)
+	return fmt.Sprintf("the database %s is corrupt, and Silkpool won't repair or reset it: %v", e.Path, e.Err)
 }
 
 func (e Unusable) Unwrap() error { return e.Err }
+
+// Unavailable refuses a database that couldn't be opened or read for a
+// reason SQLite doesn't put down to damage, such as a full disk or a
+// file Silkpool's account can't write. Why says what the reason is, where
+// SQLite's error code shows it.
+type Unavailable struct {
+	Path string
+	Why  string
+	Err  error
+}
+
+func (e Unavailable) Error() string {
+	if e.Why == "" {
+		return fmt.Sprintf("the database %s can't be opened, and Silkpool didn't find it damaged: %v", e.Path, e.Err)
+	}
+	return fmt.Sprintf("the database %s can't be opened because %s, and Silkpool didn't find it damaged: %v",
+		e.Path, e.Why, e.Err)
+}
+
+func (e Unavailable) Unwrap() error { return e.Err }
+
+// refuse returns the refusal of the database at path, which failed to
+// open with err: Unusable only when SQLite or quick_check finds it
+// damaged, and Unavailable otherwise, so a database is never called
+// corrupt for what the disk or the system did.
+func refuse(path string, err error) error {
+	var problems damaged
+	if errors.As(err, &problems) {
+		return Unusable{Path: path, Err: err}
+	}
+	var e *sqlite.Error
+	if !errors.As(err, &e) {
+		return Unavailable{Path: path, Err: err}
+	}
+	corrupt, why := explain(e.Code())
+	if corrupt {
+		return Unusable{Path: path, Err: err}
+	}
+	return Unavailable{Path: path, Why: why, Err: err}
+}
+
+// explain says whether SQLite's error code puts a failure down to a
+// damaged database and, if not, what the reason is, where the code
+// shows it.
+func explain(code int) (corrupt bool, why string) {
+	switch code {
+	case sqlite3.SQLITE_IOERR_SHMSIZE:
+		// The WAL index, the -shm file, couldn't grow: the first connection
+		// rebuilds it, which a full disk refuses.
+		return false, diskFull
+	}
+	switch code & 0xff {
+	case sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB:
+		return true, ""
+	case sqlite3.SQLITE_FULL:
+		return false, diskFull
+	case sqlite3.SQLITE_CANTOPEN, sqlite3.SQLITE_PERM, sqlite3.SQLITE_READONLY, sqlite3.SQLITE_AUTH:
+		return false, "the account Silkpool runs as can't open or write it, or its folder"
+	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+		return false, "another process has it locked"
+	}
+	return false, ""
+}
+
+const diskFull = "the disk holding it is full"
+
+// damaged is what quick_check found wrong with a database.
+type damaged []string
+
+func (d damaged) Error() string { return "quick_check: " + strings.Join(d, "; ") }
 
 // A DB is one end's database, open for that end alone: a service is the
 // only writer of its database.
@@ -90,13 +161,14 @@ type placed struct {
 
 // Open opens the database at path, creating it if it doesn't exist, and
 // migrates it forward to the schema migrations make, in one transaction.
-// It refuses a database that fails quick_check or can't be read, as
-// Unusable, and one a newer schema wrote, as TooNew with tooNew as its
-// Fix, in both cases without changing it.
+// It refuses a database that SQLite or quick_check finds damaged, as
+// Unusable, one it can't open or read for another reason, such as a full
+// disk, as Unavailable, and one a newer schema wrote, as TooNew with
+// tooNew as its Fix, in each case without changing it.
 func Open(path string, migrations []Migration, tooNew string) (*DB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		return nil, Unusable{Path: path, Err: err}
+		return nil, refuse(path, err)
 	}
 	d := &DB{path: path, db: db, written: map[string]map[string]placed{}}
 	if err := d.open(migrations, tooNew); err != nil {
@@ -110,26 +182,28 @@ func (d *DB) open(migrations []Migration, tooNew string) error {
 	ctx := context.Background()
 	conn, err := d.db.Conn(ctx)
 	if err != nil {
-		return Unusable{Path: d.path, Err: err}
+		return refuse(d.path, err)
 	}
 	d.conn = conn
 	if err := d.check(); err != nil {
-		return Unusable{Path: d.path, Err: err}
+		return refuse(d.path, err)
 	}
 	var version int
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return Unusable{Path: d.path, Err: err}
+		return refuse(d.path, err)
 	}
 	if version > len(migrations) {
 		return TooNew{Path: d.path, Version: version, Supported: len(migrations), Fix: tooNew}
 	}
 	for _, p := range []string{"PRAGMA journal_mode = WAL", "PRAGMA synchronous = FULL"} {
 		if _, err := conn.ExecContext(ctx, p); err != nil {
-			return fmt.Errorf("opening the database %s: %s: %w", d.path, p, err)
+			return refuse(d.path, fmt.Errorf("%s: %w", p, err))
 		}
 	}
 	if version < len(migrations) {
-		return d.migrate(version, migrations)
+		if err := d.migrate(version, migrations); err != nil {
+			return refuse(d.path, err)
+		}
 	}
 	return nil
 }
@@ -141,7 +215,7 @@ func (d *DB) check() error {
 		return err
 	}
 	defer rows.Close()
-	var problems []string
+	var problems damaged
 	for rows.Next() {
 		var line string
 		if err := rows.Scan(&line); err != nil {
@@ -155,7 +229,7 @@ func (d *DB) check() error {
 		return err
 	}
 	if len(problems) > 0 {
-		return fmt.Errorf("quick_check: %s", strings.Join(problems, "; "))
+		return damaged(problems)
 	}
 	return nil
 }
@@ -165,19 +239,19 @@ func (d *DB) check() error {
 func (d *DB) migrate(version int, migrations []Migration) error {
 	tx, err := d.conn.BeginTx(context.Background(), nil)
 	if err != nil {
-		return fmt.Errorf("migrating the database %s: %w", d.path, err)
+		return fmt.Errorf("migrating: %w", err)
 	}
 	defer tx.Rollback()
 	for v := version; v < len(migrations); v++ {
 		if err := migrations[v](tx); err != nil {
-			return fmt.Errorf("migrating the database %s to schema version %d: %w", d.path, v+1, err)
+			return fmt.Errorf("migrating to schema version %d: %w", v+1, err)
 		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(migrations))); err != nil {
-		return fmt.Errorf("migrating the database %s: %w", d.path, err)
+		return fmt.Errorf("migrating: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrating the database %s: %w", d.path, err)
+		return fmt.Errorf("migrating: %w", err)
 	}
 	return nil
 }

@@ -38,8 +38,9 @@ func (e *Refused) Error() string { return e.Why }
 //  1. It refuses, changing nothing, while a slot's service runs, or while
 //     the service account can't be deleted: while a process of it runs,
 //     or if Silkpool can't show it made it (winaccount.CheckDelete).
-//  2. It stops the agent's service, and ends the tray apps running from
-//     the programs' folder.
+//  2. It stops the agent's service, and ends the tray apps of every
+//     account signed in: those running from the programs' folder, and
+//     those an install moved out of it while they ran (Layout.Owns).
 //  3. It deletes the slots' services, takes away the guards the agent's
 //     surveys put in the folders in Program Files that the service
 //     account could change, which deny it by its SID (ADR 0019), then
@@ -52,7 +53,9 @@ func (e *Refused) Error() string { return e.Why }
 //     record among it, its logs and the slots' folders.
 //  5. It deletes the programs' folder. A program Windows holds, as it
 //     holds the running silkpool.exe that uninstalls, it moves out of
-//     the folder, to be deleted when Windows next starts.
+//     the folder, to be deleted when Windows next starts. So it does the
+//     empty folder, if a program that isn't Silkpool's still holds it,
+//     such as a PowerShell whose current folder it is.
 //
 // Any other step that fails stops it there. Run again, it finishes
 // what's left: a step whose work is done does nothing.
@@ -83,8 +86,8 @@ func (u Uninstall) Do() error {
 		return fmt.Errorf("stopping the %s service: %w", l.Service, err)
 	}
 	u.logf("Stopped the %s service.", l.Service)
-	if err := m.EndPrograms(l.Dir); err != nil {
-		return fmt.Errorf("ending the tray apps running from %s: %w", l.Dir, err)
+	if err := m.EndPrograms(l.Owns); err != nil {
+		return fmt.Errorf("ending Silkpool's tray apps: %w", err)
 	}
 	for _, s := range slots {
 		if err := m.DeleteService(s.Name); err != nil {
@@ -263,7 +266,21 @@ func (u Uninstall) removePrograms() error {
 			}
 		}
 	}
-	if err := m.RemoveAll(l.Dir); err != nil {
+	err := m.RemoveAll(l.Dir)
+	if errors.Is(err, ErrInUse) {
+		// What's left is the empty folder, if Windows holds the folder
+		// itself, as the current folder of a program that isn't
+		// Silkpool's, since Silkpool's have ended.
+		switch rerr := m.Remove(l.Dir); {
+		case rerr == nil:
+			err = nil
+		case errors.Is(rerr, ErrInUse):
+			if err = m.DeleteAtStart(l.Dir); err == nil {
+				u.logf("%s is in use, so Windows deletes it when it next starts.", l.Dir)
+			}
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("deleting %s: %w", l.Dir, err)
 	}
 	return nil

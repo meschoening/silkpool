@@ -135,13 +135,15 @@ func (d *Dashboard) routes() {
 
 // ServeHTTP serves r, with the headers every answer carries, refusing a
 // form posted from another origin. A request for a page's stream gets
-// the stream.
+// the stream. Referrers stay within the Hub's origin, so a form posted
+// from a page of its own carries the page's Origin, which sign-in
+// checks, not null.
 func (d *Dashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self' "+origin(d.ops.GitHubWeb())+"; frame-ancestors 'none'; base-uri 'none'")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Referrer-Policy", "same-origin")
 	if wantsStream(r) {
 		d.stream(w, r)
 		return

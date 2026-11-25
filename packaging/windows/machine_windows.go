@@ -126,7 +126,9 @@ func (Local) Remove(path string) error {
 	return inUse(err)
 }
 
-func (Local) RemoveAll(path string) error { return os.RemoveAll(path) }
+// RemoveAll fails with ErrInUse while Windows holds a file in the
+// folder, or the folder itself, as a running program's current folder.
+func (Local) RemoveAll(path string) error { return inUse(os.RemoveAll(path)) }
 
 // inUse wraps err with ErrInUse where Windows refused because it holds
 // the file: a running program can't be deleted or replaced, though it
@@ -138,12 +140,20 @@ func inUse(err error) error {
 	return err
 }
 
+func (Local) DeleteAtStart(path string) error {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	return windows.MoveFileEx(p, nil, windows.MOVEFILE_DELAY_UNTIL_REBOOT)
+}
+
 func (Local) MoveAside(path, prefix string) (string, error) {
-	var b [6]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	var id asideID
+	if _, err := rand.Read(id[:]); err != nil {
 		return "", err
 	}
-	aside := filepath.Join(os.TempDir(), prefix+hex.EncodeToString(b[:])+"-"+filepath.Base(path))
+	aside := filepath.Join(os.TempDir(), prefix+hex.EncodeToString(id[:])+"-"+filepath.Base(path))
 	from, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return "", err
@@ -573,7 +583,7 @@ func (Local) DeleteApps(key string) error {
 	return err
 }
 
-func (Local) EndPrograms(dir string) error {
+func (Local) EndPrograms(owns func(program string) bool) error {
 	// An administrator holds the debug privilege, which opens other
 	// accounts' processes, but it isn't enabled until asked for.
 	enablePrivilege("SeDebugPrivilege")
@@ -600,7 +610,7 @@ func (Local) EndPrograms(dir string) error {
 			continue // one this process can't open can't be the tray app it would end
 		}
 		program, err := processProgram(h)
-		if err != nil || !inFolder(program, dir) {
+		if err != nil || !owns(program) {
 			windows.CloseHandle(h)
 			continue
 		}
@@ -615,7 +625,7 @@ func (Local) EndPrograms(dir string) error {
 	}
 	for _, h := range ended {
 		if ev, err := windows.WaitForSingleObject(h, 10000); err != nil || ev != windows.WAIT_OBJECT_0 {
-			return fmt.Errorf("a process ended from %s hasn't exited 10 s later", dir)
+			return errors.New("a process ended hasn't exited 10 s later")
 		}
 	}
 	return nil
@@ -629,13 +639,6 @@ func processProgram(h windows.Handle) (string, error) {
 		return "", err
 	}
 	return windows.UTF16ToString(buf[:n]), nil
-}
-
-// inFolder reports whether path is in the folder dir, as Windows
-// compares paths.
-func inFolder(path, dir string) bool {
-	dir = strings.TrimRight(dir, `\`) + `\`
-	return len(path) > len(dir) && strings.EqualFold(path[:len(dir)], dir)
 }
 
 // enablePrivilege enables the privilege name in this process's token,

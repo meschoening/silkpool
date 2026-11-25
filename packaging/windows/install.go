@@ -1,6 +1,7 @@
 package windows
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -91,6 +92,9 @@ type Machine interface {
 	// marks it to be deleted when Windows next starts. It returns the new
 	// path.
 	MoveAside(path, prefix string) (string, error)
+	// DeleteAtStart marks the file or empty folder path for Windows to
+	// delete when it next starts.
+	DeleteAtStart(path string) error
 	// MakeRoot makes the agent's folder, with its state and its log
 	// folders, as the agent makes them, or checks them if they're there.
 	MakeRoot(root string) error
@@ -126,9 +130,10 @@ type Machine interface {
 	// DeleteApps deletes it.
 	SetApps(key string, e AppsEntry) error
 	DeleteApps(key string) error
-	// EndPrograms ends every process whose program is in the folder dir,
-	// but this one, and waits until they've ended.
-	EndPrograms(dir string) error
+	// EndPrograms ends every process, but this one, whose program owns
+	// reports as Silkpool's (Layout.Owns), as Windows names the program
+	// now, and waits until they've ended.
+	EndPrograms(owns func(program string) bool) error
 	// ProfileLoaded reports whether Windows has sid's profile loaded, and
 	// ProfileFolder returns its folder, as Windows lists the profile, or
 	// "" if it lists none.
@@ -289,6 +294,44 @@ func (in Install) setAside(path string) error {
 // asideName starts the name of a file moved aside: the layout's
 // folder's name, so a test's starts with its prefix.
 func (l Layout) asideName() string { return filepath.Base(l.Dir) + "-" }
+
+// An asideID is the random part of the name MoveAside gives a file it
+// moves out of its folder: the folder's name, the ID in hex, a hyphen,
+// and the file's own name, which Owns reads.
+type asideID [6]byte
+
+// Owns reports whether program, a running process's program as Windows
+// names it now, is one of the layout's: in its programs' folder, or one
+// an install or uninstall moved out of it while it ran (MoveAside),
+// wherever the temporary folder it went to, since Windows then names
+// the program by where it is now. Windows compares paths ignoring case.
+func (l Layout) Owns(program string) bool {
+	dir := strings.TrimRight(l.Dir, `\/`)
+	if len(program) > len(dir)+1 && strings.EqualFold(program[:len(dir)], dir) && isSeparator(program[len(dir)]) {
+		return true
+	}
+	name := base(program)
+	prefix := l.asideName()
+	if len(name) < len(prefix) || !strings.EqualFold(name[:len(prefix)], prefix) {
+		return false
+	}
+	id, file, ok := strings.Cut(name[len(prefix):], "-")
+	if _, err := hex.DecodeString(id); !ok || err != nil || len(id) != 2*len(asideID{}) {
+		return false
+	}
+	for _, p := range Programs {
+		if strings.EqualFold(file, p) || strings.EqualFold(file, old(p)) {
+			return true
+		}
+	}
+	return false
+}
+
+// base is the last element of path, a Windows path, whose separator
+// tests on other systems may write as theirs.
+func base(path string) string { return path[strings.LastIndexAny(path, `\/`)+1:] }
+
+func isSeparator(c byte) bool { return c == '\\' || c == '/' }
 
 // removeOld deletes the programs renamed aside, which nothing holds once
 // the agent has restarted, unless a tray app still runs from one: that

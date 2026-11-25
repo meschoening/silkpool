@@ -147,6 +147,15 @@ type tray struct {
 	panel *panel.Panel
 	log   *slog.Logger
 
+	// pushing is held while a push renders the panel's changes and sends
+	// them, so pushes reach the window in the order they're rendered.
+	// listening reports that the window's script has said it listens:
+	// until then nothing is pushed, since Wails holds what's sent before
+	// the page's runtime loads and replays it after, which could land
+	// after the full push that follows (#355).
+	pushing   sync.Mutex
+	listening bool
+
 	mu sync.Mutex
 	// window is the panel's, made when the icon is first clicked.
 	window *application.WebviewWindow
@@ -191,6 +200,7 @@ func (a app) run() error {
 		Logger: log,
 	})
 	t.app.Event.On("panel:height", t.fit)
+	t.app.Event.On("panel:shown", func(*application.CustomEvent) { t.resend() })
 
 	// The icon is made once the app has started, and nothing touches it
 	// or the window before: Wails starts an icon made earlier on a
@@ -368,8 +378,26 @@ func (t *tray) setIcon(force bool) {
 	setIcon(ti, icon.For(glyph))
 }
 
-// push sends the window the parts of the panel that changed.
-func (t *tray) push() {
+// push sends the window the parts of the panel that changed, once its
+// script listens.
+func (t *tray) push() { t.send(false) }
+
+// resend sends the window every part of the panel, once it says it has
+// taken in a page the panel rendered, which may be older than a push it
+// already has (#355).
+func (t *tray) resend() { t.send(true) }
+
+// send sends the window the parts of the panel that changed, or every
+// part if all, which the window's script asks for once it listens.
+func (t *tray) send(all bool) {
+	t.pushing.Lock()
+	defer t.pushing.Unlock()
+	if all {
+		t.listening = true
+		t.panel.Resend()
+	} else if !t.listening {
+		return
+	}
 	html, err := t.panel.Changes()
 	if err != nil {
 		t.log.Error("can't render the panel: " + err.Error())

@@ -15,7 +15,9 @@
 //   answer is morphed in: a refusal's page, or the page a redirect lands
 //   on, or the page its Content-Location names. A redirect the web view
 //   hands back unfollowed is loaded. Other forms, such as the App manifest's to GitHub, and forms
-//   marked data-native, are posted by the browser.
+//   marked data-native, are posted by the browser. Once an answer is
+//   morphed in, a "silkpool:shown" event on the document says so, which
+//   the tray panel's script passes on to the app (#355).
 // - A button with data-copy copies its text to the clipboard.
 (() => {
   'use strict';
@@ -153,6 +155,7 @@
       if (form.isConnected) form.reset();
       const alert = !res.ok && document.querySelector('[role="alert"]');
       if (alert) alert.scrollIntoView({ block: 'nearest' });
+      document.dispatchEvent(new Event('silkpool:shown'));
     }
     connect();
   }

@@ -359,6 +359,19 @@ func (p *Panel) Changes() (string, error) {
 	return b.String(), nil
 }
 
+// Resend makes the next push carry every part, whatever was sent
+// before: the window says it has taken in a page the panel rendered,
+// once its script listens for pushes or once it has morphed in a form's
+// answer. That page may be older than a push the window already has, or
+// than one it missed before it listened, since a push and a page reach
+// it by different routes, so the parts as sent no longer say what it
+// shows (#355).
+func (p *Panel) Resend() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	clear(p.sent)
+}
+
 // ServeHTTP serves the panel's page and the files it loads.
 func (p *Panel) ServeHTTP(w http.ResponseWriter, r *http.Request) { p.mux.ServeHTTP(w, r) }
 
@@ -383,9 +396,9 @@ func (p *Panel) routes() *http.ServeMux {
 
 // load serves the page, with the editor or confirmation its query opens,
 // which the window now has. Later pushes render the same page. What was
-// sent stays as it was: a push a load overtakes may still land after it,
-// so the next one compares with what that push carried, and carries the
-// parts that differ from now, to set the page right.
+// sent stays as it was until the window's script says it listens, which
+// calls Resend: a push the window missed while it loaded, before its
+// script listened, would otherwise leave it as the page had it (#355).
 func (p *Panel) load(w http.ResponseWriter, r *http.Request) {
 	p.serve(w, r.URL.Query())
 }

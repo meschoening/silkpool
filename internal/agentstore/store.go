@@ -101,8 +101,8 @@ type Store struct {
 
 // Open opens the agent's store in dir, its state folder, creating it if
 // it doesn't exist, and loads everything. It refuses a database that's
-// corrupt or unreadable, or that a newer Silkpool wrote, naming the
-// file, and migrates an older one forward.
+// corrupt, that it can't open, such as on a full disk, or that a newer
+// Silkpool wrote, naming the file, and migrates an older one forward.
 //
 // It then tidies the node key: it deletes a node key that neither an
 // enrolled node nor an enroll under way holds, and forgets an enroll

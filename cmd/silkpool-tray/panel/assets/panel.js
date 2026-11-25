@@ -4,6 +4,12 @@
 // - The app pushes the parts that changed as "panel" Wails events,
 //   since WebView2 holds server-sent events back until their response
 //   ends. They go to silkpool.apply, which morphs them in.
+// - The window tells the app, as a "panel:shown" event, when it has
+//   taken in a page the app rendered: once it listens for pushes, and
+//   after a form's answer is morphed in, which the live-update script
+//   says with "silkpool:shown". A push and a page reach the window by
+//   different routes, in either order, so the app then pushes every part
+//   again, and the panel shows the node as it is now (#355).
 // - The window is as tall as the panel: its height goes to the app as a
 //   "panel:height" event whenever it changes, as when the buttons wrap
 //   or the editor opens.
@@ -23,6 +29,11 @@
     wails.Events.Emit('panel:height', h);
   }
 
+  const shown = () => {
+    if (wails) wails.Events.Emit('panel:shown');
+  };
+  document.addEventListener('silkpool:shown', shown);
+
   document.addEventListener('click', (e) => {
     const a = e.target instanceof Element && e.target.closest('a[target="_blank"]');
     if (!a) return;
@@ -36,6 +47,7 @@
   import('/wails/runtime.js').then((rt) => {
     wails = rt;
     rt.Events.On('panel', (e) => window.silkpool.apply(e.data));
+    shown();
     new ResizeObserver(fit).observe(panel);
     fit();
   });

@@ -157,6 +157,6 @@ It waits for running jobs to finish, resets the slots, and leaves the Hub for go
 
 Then uninstall Silkpool from **Settings ▸ Apps ▸ Installed apps ▸ Silkpool**, or with `silkpool uninstall` in a PowerShell run as administrator. That deletes everything Silkpool put on the machine: the service account and its profile, the slots' services, the agent's service, the entries above, `C:\ProgramData\Silkpool` and the programs. It refuses, and changes nothing, while the machine is still enrolled, while a slot's service runs, or while a process still runs as the service account.
 
-Windows can't delete a program that's still running, such as the `silkpool.exe` the uninstall runs from. The uninstall moves each such program into your temporary folder, says where, and marks it for Windows to delete when the machine next starts. `C:\Program Files\Silkpool` itself is gone.
+The uninstall closes the tray app wherever it's open, for every account signed in. Windows can't delete a program that's still running, such as the `silkpool.exe` the uninstall runs from. The uninstall moves each such program into your temporary folder, says where, and marks it for Windows to delete when the machine next starts. `C:\Program Files\Silkpool` itself is gone, unless another program still has it open, such as a PowerShell whose current folder it is: then the uninstall says so, and Windows deletes the empty folder when the machine next starts.
 
 Then remove Defender's exclusions, as [Removing the exclusions](windows-defender.md#removing-the-exclusions) says.

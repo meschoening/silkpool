@@ -39,9 +39,9 @@ const (
 
 // Open opens the Hub's store in dir, its state folder, creating it if
 // it doesn't exist, and loads everything. It refuses a database that's
-// corrupt or unreadable, or that a newer Silkpool wrote, naming the
-// file, and migrates an older one forward. The Hub then applies
-// pool.Started before anything else.
+// corrupt, that it can't open, such as on a full disk, or that a newer
+// Silkpool wrote, naming the file, and migrates an older one forward.
+// The Hub then applies pool.Started before anything else.
 func Open(dir string) (*Store, error) {
 	db, err := store.Open(filepath.Join(dir, File), migrations, tooNew)
 	if err != nil {

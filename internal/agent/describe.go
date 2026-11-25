@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/meschoening/silkpool/internal/store"
 )
 
 // describe names an event or an effect for the agent's own log: its type,
 // then each of its fields that is a plain value, as name=value, and the
-// type of each field that holds an interface, such as a command's event.
+// type of each field that holds an interface, such as a command's event,
+// but for an error with a stable code, such as a reply's refusal, which
+// is named by its code (#355).
 // Pointers, slices, maps and nested structs are left out, so a zone's
 // tables or an outbox's entries don't flood the log, and so is anything
 // whose type hides itself, such as a secret.
@@ -50,6 +54,11 @@ func describe(v any) string {
 				continue
 			}
 			s = fmt.Sprintf("%T", fv.Interface())
+			if err, ok := fv.Interface().(error); ok {
+				if e := store.FromError(err); e.Code != "" {
+					s = e.Code
+				}
+			}
 		default:
 			continue
 		}

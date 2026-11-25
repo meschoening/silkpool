@@ -10,5 +10,9 @@
 {{- with .Refusal}}
 <p class="amber alert" role="alert">{{.}}</p>
 {{- end}}
+{{- with .Elsewhere}}
+<p class="amber alert" role="alert">This page isn't at the Hub's address, where GitHub sends a sign-in back. Sign in at <a class="lnk" href="{{.}}/sign-in">{{.}}</a>.</p>
+{{- else}}
 <form class="btns go" method="post" action="/sign-in" data-native><button class="btn is-primary">Sign in with GitHub</button></form>
+{{- end}}
 </div>{{end}}
