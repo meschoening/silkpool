@@ -25,7 +25,7 @@ Then run the command the Hub's **Add node** page shows for this machine, with a 
 & ([scriptblock]::Create((irm https://github.com/meschoening/silkpool/releases/download/v<hub version>/install.ps1))) -Code <code>
 ```
 
-`install.ps1` picks the zip for the machine, x64 or ARM64, downloads it from the Hub's own release into a temporary folder, checks it against the release's `SHA256SUMS`, and runs `silkpool.exe install` from there, which installs Silkpool and starts its service. Then it waits up to 30 seconds for the service and enrolls the machine with the code. Run it as a command, as Add node gives it, not as a saved script file, so that the execution policy doesn't stop it. If Defender flags the install itself, which the exclusions don't cover, install from a folder of your own as [If Defender flags the install itself](windows-defender.md#if-defender-flags-the-install-itself) says.
+`install.ps1` picks the zip for the machine, x64 or ARM64, downloads it from the Hub's own release into a temporary folder, checks it against the release's `SHA256SUMS`, and runs `silkpool.exe install` from there, which installs Silkpool and starts its service. The install also starts the tray app for you, unelevated, as signing in would, and other administrators get it when they sign in. Installed with no desktop, as over SSH, it starts at the next sign-in, or from the Start menu's **Silkpool**. Then it waits up to 30 seconds for the service and enrolls the machine with the code. Run it as a command, as Add node gives it, not as a saved script file, so that the execution policy doesn't stop it. If Defender flags the install itself, which the exclusions don't cover, install from a folder of your own as [If Defender flags the install itself](windows-defender.md#if-defender-flags-the-install-itself) says.
 
 To install without enrolling, leave out `-Code` and the code. Then enroll the machine later, from a new PowerShell run as administrator, with a code from the Add node page, or from `sudo silkpool-hub code new` on the Hub's machine:
 
@@ -35,13 +35,13 @@ silkpool enroll <code>
 
 A code works once, for 24 hours. The machine enrolls under its host name, unless you give `--name`. A new node is **Paused indefinitely**, with auto-resume off and one slot.
 
-A node runs jobs for one **target**: the repository, or the organization's runner group, where its runners register. The machine enrolls with the Hub's default target. The first target the Hub gets, in the last step of its setup, becomes the default, and `sudo silkpool-hub target default <target>` changes it. A node that enrolls while the Hub has no target has none, and `silkpool resume` refuses it, with "The node has no target: choose a target first." To give it one, finish the Hub's setup, or add a target on the dashboard's **Targets** page, and choose the node's target on its page there, under **Runs jobs for**, or on the Hub's machine:
+A node runs jobs for one **target**: the repository, or the organization's runner group, where its runners register. The machine enrolls with the Hub's default target. The first target the Hub gets, in the last step of its setup, becomes the default, and `sudo silkpool-hub target default <target>`, on the Hub's machine, changes it. A node that enrolls while the Hub has no target has none, and `silkpool resume` refuses it, with "The node has no target: choose a target first." To give it one, finish the Hub's setup, or add a target on the dashboard's **Targets** page, and choose the node's target on its page there, under **Runs jobs for**, or on the Hub's machine:
 
 ```sh
 sudo silkpool-hub node set-target <node> <target>
 ```
 
-`sudo silkpool-hub target list` lists the Hub's targets.
+`sudo silkpool-hub target list`, on the Hub's machine, lists the Hub's targets.
 
 Check its auto-resume and its slot limit, in the tray app or with the CLI, then put it on duty:
 
@@ -82,7 +82,7 @@ Its Slots and Exposure lines give each slot's failure in full, its Runner app li
 | `silkpool` | Silkpool's service account, the account every slot runs as, and its profile |
 | a service for each slot | `SilkpoolSlot` and the slot's number, which hosts the slot's runner as the service account |
 | the system `Path` | `C:\Program Files\Silkpool`, so a new PowerShell finds `silkpool` |
-| the Run entry and the Start menu's **Silkpool** | the tray app, started when an administrator signs in |
+| the Run entry and the Start menu's **Silkpool** | the tray app, started when an administrator signs in, and by the install for the administrator who runs it |
 | the Apps entry **Silkpool** | its Uninstall runs `silkpool uninstall` |
 
 Before its slots get runners, Silkpool also adds entries that deny its service account changing the folders in Program Files that every account may change, as some installers leave them, and reading what its read check finds it could read in the places it checks, such as the entries at the top of fixed drives. Every other account keeps what it had. If the account could still change or read something the check looks at, the exposure check below says so. It doesn't look everywhere, so keep data that jobs mustn't read out of folders that every account may read. The uninstall removes the entries Silkpool added.
@@ -141,7 +141,7 @@ Running jobs carry on while the agent is stopped: each slot's runner is a servic
 & ([scriptblock]::Create((irm https://github.com/meschoening/silkpool/releases/download/v<hub version>/install.ps1)))
 ```
 
-It stops and restarts only the agent's service, and running jobs carry on through the restart. The node stays enrolled. A tray app that's open starts itself again on the new version. The old programs Windows still held are deleted when it next starts.
+It stops and restarts only the agent's service, and running jobs carry on through the restart. The node stays enrolled. A tray app that's open starts itself again on the new version, and if yours isn't open, the install starts it. The old programs Windows still held are deleted when it next starts.
 
 Going back a version isn't supported: the install refuses an older version over a newer one. The copy isn't a way back either, so don't put it in place of the agent's state folder.
 

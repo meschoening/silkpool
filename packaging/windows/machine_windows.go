@@ -701,3 +701,160 @@ func (Local) Unguard(sid string, places []winexposure.Place) error {
 	}
 	return winexposure.Unguard(context.Background(), s, places)
 }
+
+var (
+	advapi32                    = windows.NewLazySystemDLL("advapi32.dll")
+	procCreateProcessWithTokenW = advapi32.NewProc("CreateProcessWithTokenW")
+)
+
+// StartTray finds the desktop's shell, Explorer, by its window, and
+// starts the tray app with a copy of the shell's token, through
+// CreateProcessWithTokenW, which an administrator may call, holding the
+// impersonate privilege. Explorer runs with the account's filtered
+// token, as programs started at sign-in do, so the tray app does too.
+// A session with no desktop, as SSH's, has no shell window.
+func (Local) StartTray(program, command string, tray func(program string) bool) (string, TrayStart, error) {
+	shell := windows.GetShellWindow()
+	if shell == 0 {
+		return "", NoDesktop, nil
+	}
+	var pid uint32
+	if _, err := windows.GetWindowThreadProcessId(shell, &pid); err != nil {
+		return "", NoDesktop, fmt.Errorf("finding the desktop's shell: %w", err)
+	}
+	p, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return "", NoDesktop, fmt.Errorf("opening the desktop's shell: %w", err)
+	}
+	defer windows.CloseHandle(p)
+	var token windows.Token
+	if err := windows.OpenProcessToken(p, windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &token); err != nil {
+		return "", NoDesktop, fmt.Errorf("reading the desktop's shell's token: %w", err)
+	}
+	defer token.Close()
+	user := accountName(token)
+	var session uint32
+	if err := windows.ProcessIdToSessionId(pid, &session); err != nil {
+		return user, NoDesktop, fmt.Errorf("finding the desktop's session: %w", err)
+	}
+	open, err := runsIn(session, tray)
+	if err != nil {
+		return user, NoDesktop, fmt.Errorf("looking for a tray app that's open: %w", err)
+	}
+	if open {
+		return user, TrayOpen, nil
+	}
+	// Asked for with only the rights CreateProcessWithTokenW's docs name,
+	// and without the increase-quota privilege enabled, the start was
+	// refused on the Windows VM, "Access is denied". With the rights to
+	// change the copy's session and default ACL, and the privilege, as
+	// the usual way to start a program as the desktop's account has them,
+	// it starts.
+	enablePrivilege("SeIncreaseQuotaPrivilege")
+	var primary windows.Token
+	if err := windows.DuplicateTokenEx(token, windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE|windows.TOKEN_ASSIGN_PRIMARY|windows.TOKEN_ADJUST_DEFAULT|windows.TOKEN_ADJUST_SESSIONID, nil, windows.SecurityImpersonation, windows.TokenPrimary, &primary); err != nil {
+		return user, NoDesktop, fmt.Errorf("copying the desktop's shell's token: %w", err)
+	}
+	defer primary.Close()
+	// The account's own environment, as at sign-in, not this process's.
+	var env *uint16
+	if err := windows.CreateEnvironmentBlock(&env, primary, false); err != nil {
+		return user, NoDesktop, fmt.Errorf("making the account's environment: %w", err)
+	}
+	defer windows.DestroyEnvironmentBlock(env)
+	// It starts in the system folder, as programs the Run key starts do,
+	// so it doesn't hold its programs' folder as its current one.
+	dir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return user, NoDesktop, err
+	}
+	app, err := windows.UTF16PtrFromString(program)
+	if err != nil {
+		return user, NoDesktop, err
+	}
+	line, err := windows.UTF16FromString(command)
+	if err != nil {
+		return user, NoDesktop, err
+	}
+	cwd, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return user, NoDesktop, err
+	}
+	desktop, err := windows.UTF16PtrFromString(`winsta0\default`)
+	if err != nil {
+		return user, NoDesktop, err
+	}
+	si := windows.StartupInfo{Desktop: desktop}
+	si.Cb = uint32(unsafe.Sizeof(si))
+	var pi windows.ProcessInformation
+	r, _, err := procCreateProcessWithTokenW.Call(uintptr(primary), 0, uintptr(unsafe.Pointer(app)), uintptr(unsafe.Pointer(&line[0])),
+		windows.CREATE_UNICODE_ENVIRONMENT, uintptr(unsafe.Pointer(env)), uintptr(unsafe.Pointer(cwd)), uintptr(unsafe.Pointer(&si)), uintptr(unsafe.Pointer(&pi)))
+	if r == 0 {
+		return user, NoDesktop, fmt.Errorf("starting it with the desktop's token: %w", err)
+	}
+	windows.CloseHandle(pi.Thread)
+	windows.CloseHandle(pi.Process)
+	return user, TrayStarted, nil
+}
+
+// accountName is the account token is, as DOMAIN\name, or its SID if
+// Windows can't name it, or "the account at this desktop": it's only
+// said.
+func accountName(token windows.Token) string {
+	u, err := token.GetTokenUser()
+	if err != nil {
+		return "the account at this desktop"
+	}
+	name, domain, _, err := u.User.Sid.LookupAccount("")
+	if err != nil {
+		return u.User.Sid.String()
+	}
+	return domain + `\` + name
+}
+
+func (Local) TrayOpen(tray func(program string) bool) (bool, error) {
+	shell := windows.GetShellWindow()
+	if shell == 0 {
+		return false, nil
+	}
+	var pid uint32
+	if _, err := windows.GetWindowThreadProcessId(shell, &pid); err != nil {
+		return false, err
+	}
+	var session uint32
+	if err := windows.ProcessIdToSessionId(pid, &session); err != nil {
+		return false, err
+	}
+	return runsIn(session, tray)
+}
+
+// runsIn reports whether a process in session whose program match
+// reports runs.
+func runsIn(session uint32, match func(program string) bool) (bool, error) {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return false, err
+	}
+	defer windows.CloseHandle(snap)
+	var e windows.ProcessEntry32
+	e.Size = uint32(unsafe.Sizeof(e))
+	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		var s uint32
+		if e.ProcessID == 0 || windows.ProcessIdToSessionId(e.ProcessID, &s) != nil || s != session {
+			continue
+		}
+		h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, e.ProcessID)
+		if err != nil {
+			continue
+		}
+		program, err := processProgram(h)
+		windows.CloseHandle(h)
+		if err == nil && match(program) {
+			return true, nil
+		}
+	}
+	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return false, err
+	}
+	return false, nil
+}

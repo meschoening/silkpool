@@ -132,7 +132,7 @@ Then remove the package:
 sudo apt-get remove silkpool
 ```
 
-or `sudo dnf remove silkpool`. That deletes everything Silkpool put on the machine: the program, its units, the service account, `/var/lib/silkpool` and `/var/log/silkpool`. It refuses, and deletes nothing, while a process still runs as the service account or Silkpool can't prove the account is its own. While the machine is still enrolled, the package refuses to be removed:
+or `sudo dnf remove silkpool`. That deletes everything Silkpool put on the machine: the program, its units, the service account, `/var/lib/silkpool`, `/var/log/silkpool`, and the budget on `silkpool.slice`, which it stops and unloads. Drop-ins you made with `systemctl edit silkpool.slice` stay. It refuses, and deletes nothing, while a process still runs as the service account or Silkpool can't prove the account is its own. While the machine is still enrolled, the package refuses to be removed:
 
 ```text
 This machine is still enrolled in https://hub.example.com. Run `silkpool remove` first, or `silkpool remove --force` if the Hub is gone.

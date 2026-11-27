@@ -106,7 +106,7 @@ To change it with the CLI:
 The fields are:
 
 - `--at`: a 24-hour time, such as `07:30` or `18:00`.
-- `--days`: three-letter day names, in a list, a range or both, such as `mon-fri`, `mon,wed,fri` or `mon-wed,sat`. A range that passes Sunday wraps round, so `fri-mon` is a long weekend.
+- `--days`: three-letter day names, in a list, a range or both, such as `mon-fri`, `mon,wed,fri` or `mon-wed,sat`. Commas or spaces separate a list's items, so `"mon wed fri"` works too, and so do the days `status --json` lists, joined either way. A range that passes Sunday wraps round, so `fri-mon` is a long weekend.
 - `--zone`: an IANA time zone, such as `America/Chicago` or `Europe/Berlin`, or `local` for the machine's own. If the machine's own isn't known, `local` is Central, `America/Chicago`, and the CLI says so.
 
 ```sh
@@ -177,7 +177,7 @@ One about a condition can't be dismissed, and clears by itself once the conditio
 
 ## Every command
 
-These are all the `silkpool` commands, as `silkpool help` gives them:
+These are all the `silkpool` commands, as `silkpool help` gives them on Linux and macOS. On Windows, it says "Needs a PowerShell run as administrator." in place of "Needs sudo.", and those commands run there without `sudo`.
 
 | | |
 |---|---|
@@ -195,7 +195,7 @@ These are all the `silkpool` commands, as `silkpool help` gives them:
 | `silkpool diagnostics [--json]` | Print the diagnostics report. |
 | `silkpool version [--json]` | Print the CLI's and the service's versions. |
 
-On Windows, "Needs sudo" means a PowerShell run as administrator. The install pages give `enroll`, `remove`, `budget` and `diagnostics`, and [Install a Hub on Linux](install-hub-linux.md) gives `set-hub-url`. `silkpool version` prints the CLI's version and the running service's, which differ only until an upgrade has restarted the service:
+The install pages give `enroll`, `remove`, `budget` and `diagnostics`, and [Install a Hub on Linux](install-hub-linux.md) gives `set-hub-url`. `silkpool version` prints the CLI's version and the running service's, which differ only until an upgrade has restarted the service:
 
 ```text
 CLI      <version>

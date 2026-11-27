@@ -286,7 +286,7 @@ func runEnroll(ctx context.Context, s *session, args []string) int {
 	}
 	if r.node.Enrolled {
 		if !s.json {
-			fmt.Fprintf(s.env.Stderr, "This machine is already enrolled in %s. Remove it first with `sudo silkpool remove`.\n", r.status.Hub.URL)
+			fmt.Fprintf(s.env.Stderr, "This machine is already enrolled in %s. Remove it first with `%s`.\n", r.status.Hub.URL, s.elevation().Command("remove"))
 		}
 		return s.refusedJSON(control.ErrorOf(node.ErrEnrolled))
 	}
@@ -313,7 +313,7 @@ func runEnroll(ctx context.Context, s *session, args []string) int {
 			case control.CodeNameTaken:
 				fmt.Fprintf(s.env.Stderr, "Run it again with `--name %s`.\n", e.Suggestion)
 			case control.CodeAnswerLost:
-				fmt.Fprintln(s.env.Stderr, wording.EnrollAnswerLost)
+				fmt.Fprintln(s.env.Stderr, s.elevation().EnrollAnswerLost())
 			}
 		}
 		if e.Code == control.CodeUnreachable || e.Code == control.CodeAnswerLost {

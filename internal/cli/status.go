@@ -83,8 +83,12 @@ func (s *session) printStatus(r read) {
 	fmt.Fprintf(out, "%s · %s · %s\n", v.Name, st.Machine.OSVersion, wording.Arch(st.Machine.Arch))
 	if !n.Enrolled {
 		fmt.Fprintln(out, "This machine isn't enrolled in a Hub.")
-		fmt.Fprintln(out, "Enroll it with a code from the Hub's Add node page:")
-		fmt.Fprintln(out, "  sudo silkpool enroll <code>")
+		page := "Enroll it with a code from the Hub's Add node page"
+		if where := s.elevation().Where(); where != "" {
+			page += ". " + where
+		}
+		fmt.Fprintln(out, page+":")
+		fmt.Fprintln(out, "  "+s.elevation().Command("enroll <code>"))
 		s.line("Agent", st.Version)
 		return
 	}

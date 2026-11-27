@@ -34,6 +34,10 @@
 //     raced the readings that set its image (#286);
 //   - the menu is updated once the icon is made, which groups its radio
 //     items on Windows;
+//   - the icon's tooltip is sent after each of its images, and the app,
+//     not Wails, changes the image when the Windows taskbar turns light
+//     or dark, since Windows hides the tooltip of an icon whose image
+//     changes without it (#364);
 //   - the window is as tall as the panel, so its buttons have room to
 //     wrap, as they do on macOS;
 //   - the exe carries version info (package versioninfo);
@@ -156,11 +160,14 @@ type tray struct {
 	pushing   sync.Mutex
 	listening bool
 
+	// setting is held while the icon's image and tooltip are set, so
+	// each tooltip follows its image, and shown is what they were set to.
+	setting sync.Mutex
+	shown   icon.Shown
+
 	mu sync.Mutex
 	// window is the panel's, made when the icon is first clicked.
 	window *application.WebviewWindow
-	// glyph is the icon's, as last set.
-	glyph string
 }
 
 // run runs the tray app until it quits. The first reading decides
@@ -262,6 +269,7 @@ func (t *tray) start(fake *source.Fake) {
 	t.mu.Lock()
 	t.icon = ti
 	t.mu.Unlock()
+	t.followTheme(ti)
 	menu := t.menu(fake)
 	ti.SetMenu(menu)
 	ti.OnClick(func() { go t.toggle() })
@@ -363,20 +371,23 @@ func (t *tray) fit(e *application.CustomEvent) {
 	}
 }
 
-// setIcon sets the icon and its tooltip to the state's when it has
-// changed, or at once if force.
-func (t *tray) setIcon(force bool) {
-	glyph, tooltip := t.panel.Icon()
+// setIcon sets the icon's image and tooltip to the state's, what of them
+// has changed, or both if all. The tooltip goes after the image, which
+// on Windows hides it otherwise (#364).
+func (t *tray) setIcon(all bool) {
 	t.mu.Lock()
-	ti, changed := t.icon, glyph != t.glyph
-	t.glyph = glyph
+	ti := t.icon
 	t.mu.Unlock()
-	if !changed && !force {
-		return
-	}
-	ti.SetTooltip(tooltip)
-	setIcon(ti, icon.For(glyph))
+	t.setting.Lock()
+	defer t.setting.Unlock()
+	glyph, tooltip := t.panel.Icon()
+	t.shown.Show(trayIcon{ti}, icon.Face{Glyph: glyph, Tooltip: tooltip}, all)
 }
+
+// trayIcon is the icon as package icon sets it.
+type trayIcon struct{ *application.SystemTray }
+
+func (ti trayIcon) SetImage(i icon.Icon) { setIcon(ti.SystemTray, i) }
 
 // push sends the window the parts of the panel that changed, once its
 // script listens.

@@ -44,7 +44,6 @@ func init() {
 	modes["agent"] = runAgent
 	modes[winslot.Mode] = func(_ context.Context, args []string) int { return winslot.Main(args) }
 	startCommand = "Start-Service Silkpool, in an administrator PowerShell"
-	elevate = "from an administrator PowerShell"
 	smartAppControl = winsac.Read
 	executionPolicy = winexecpolicy.Read
 }

@@ -9,10 +9,12 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/meschoening/silkpool/internal/cli"
 	"github.com/meschoening/silkpool/internal/control"
+	"github.com/meschoening/silkpool/internal/terminal"
 	"github.com/meschoening/silkpool/internal/version"
 	"github.com/meschoening/silkpool/internal/winexecpolicy"
 	"github.com/meschoening/silkpool/internal/winsac"
@@ -32,10 +34,6 @@ var helper = func(args []string) (code int, ok bool) { return 0, false }
 // service isn't running. Each OS's file sets its own, which packaging
 // supplies.
 var startCommand = "start the Silkpool service"
-
-// elevate says how to run a command that needs elevation, as the CLI
-// says it, or is empty for "with sudo". Windows's file sets its own.
-var elevate = ""
 
 // smartAppControl reads Smart App Control's state, which enroll names
 // while it would block the runner application, or is nil where there's
@@ -66,19 +64,13 @@ func main() {
 		Stdout:          os.Stdout,
 		Stderr:          os.Stderr,
 		Getenv:          os.Getenv,
-		StdinTerminal:   terminal(os.Stdin),
-		StdoutTerminal:  terminal(os.Stdout),
+		StdinTerminal:   terminal.Is(os.Stdin),
+		StdoutTerminal:  terminal.Is(os.Stdout),
 		Socket:          control.Path,
 		Version:         version.Version,
 		StartCommand:    startCommand,
-		Elevate:         elevate,
+		Windows:         runtime.GOOS == "windows",
 		SmartAppControl: smartAppControl,
 		ExecutionPolicy: executionPolicy,
 	}))
-}
-
-// terminal reports whether f is a terminal.
-func terminal(f *os.File) bool {
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

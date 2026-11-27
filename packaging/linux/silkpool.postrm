@@ -5,8 +5,11 @@
 # the machine wasn't enrolled, and deleted the service account, so with
 # the binary and the units, it deletes everything else Silkpool put on
 # the machine: the agent's state folder, with the runner application's
-# installs, the slots' folders and the account's home, and its log
-# folder.
+# installs, the slots' folders and the account's home, its log folder,
+# and the budget's runtime drop-ins for silkpool.slice (ADR 0014), which
+# systemd keeps until a reboot. It stops the slice, empty since no
+# process runs as the account, so the reload unloads it. An operator's
+# own drop-ins in /etc stay.
 set -e
 
 case "$1" in
@@ -14,7 +17,10 @@ remove | purge | 0) ;;
 *) exit 0 ;;
 esac
 
-rm -rf /var/lib/silkpool /var/log/silkpool
+rm -rf /var/lib/silkpool /var/log/silkpool /run/systemd/system.control/silkpool.slice.d
 if [ -d /run/systemd/system ]; then
+	if systemctl --quiet is-active silkpool.slice; then
+		systemctl stop silkpool.slice
+	fi
 	systemctl daemon-reload
 fi

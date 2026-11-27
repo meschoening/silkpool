@@ -143,7 +143,31 @@ type Machine interface {
 	// the folders in Program Files the agent's surveys guarded
 	// (winexposure.Unguard).
 	Unguard(sid string, places []winexposure.Place) error
+	// StartTray starts program with the command line command, as the Run
+	// entry starts it at sign-in: in the session of the desktop this
+	// process runs on, as the account signed in there, with the token
+	// that desktop's shell runs with, not this process's elevated one. It
+	// starts nothing if there's no desktop, as over SSH, or if a process
+	// whose program tray reports as the tray app's runs in that session
+	// already. It returns the account, as DOMAIN\name, and what it did.
+	StartTray(program, command string, tray func(program string) bool) (string, TrayStart, error)
+	// TrayOpen reports whether a process whose program tray reports as
+	// the tray app's runs in the session of the desktop this process runs
+	// on, and false if there's no desktop.
+	TrayOpen(tray func(program string) bool) (bool, error)
 }
+
+// A TrayStart is what StartTray did.
+type TrayStart int
+
+const (
+	// NoDesktop is no desktop to start the tray app on.
+	NoDesktop TrayStart = iota
+	// TrayOpen is a tray app already running at the desktop.
+	TrayOpen
+	// TrayStarted is the tray app started at the desktop.
+	TrayStarted
+)
 
 // An Install is silkpool install: Silkpool at Version, from the
 // programs in the folder From, into Layout.
@@ -177,6 +201,13 @@ func (e *Downgrade) Error() string {
 //  5. It registers the agent's service and starts it.
 //  6. It adds the folder to the system PATH, and the Run, Start-menu and
 //     Apps entries.
+//  7. It starts the tray app for the account at the desktop it runs on,
+//     as the Run entry would at sign-in, unless it's open there already,
+//     as on an upgrade, where it starts itself again on the new version.
+//     It looks for one before it stops the agent, while one that's open
+//     can't yet be starting itself again, and once more before it starts
+//     one. The tray app not starting fails nothing: it starts at the next
+//     sign-in.
 //
 // A step that fails stops it there. Run again, it starts over, and
 // finishes what's left.
@@ -212,6 +243,7 @@ func (in Install) Do() error {
 	if err != nil {
 		return err
 	}
+	trayOpen := in.trayOpen()
 	if state != Missing {
 		if err := m.StopService(l.Service); err != nil {
 			return fmt.Errorf("stopping the %s service: %w", l.Service, err)
@@ -231,6 +263,7 @@ func (in Install) Do() error {
 		return err
 	}
 	in.removeOld()
+	in.startTray(trayOpen)
 	switch {
 	case !there:
 		in.logf("Silkpool %s is installed.", in.Version)
@@ -306,25 +339,40 @@ type asideID [6]byte
 // wherever the temporary folder it went to, since Windows then names
 // the program by where it is now. Windows compares paths ignoring case.
 func (l Layout) Owns(program string) bool {
+	_, ok := l.owned(program)
+	return ok
+}
+
+// IsTray reports whether program, a running process's program as
+// Windows names it now, is the layout's tray app: its silkpool-tray.exe,
+// or one an install renamed or moved aside while it ran (Owns).
+func (l Layout) IsTray(program string) bool {
+	file, ok := l.owned(program)
+	return ok && (strings.EqualFold(file, Tray) || strings.EqualFold(file, old(Tray)))
+}
+
+// owned returns the file name program had in the programs' folder, and
+// whether it's one of the layout's (Owns).
+func (l Layout) owned(program string) (string, bool) {
 	dir := strings.TrimRight(l.Dir, `\/`)
 	if len(program) > len(dir)+1 && strings.EqualFold(program[:len(dir)], dir) && isSeparator(program[len(dir)]) {
-		return true
+		return base(program), true
 	}
 	name := base(program)
 	prefix := l.asideName()
 	if len(name) < len(prefix) || !strings.EqualFold(name[:len(prefix)], prefix) {
-		return false
+		return "", false
 	}
 	id, file, ok := strings.Cut(name[len(prefix):], "-")
 	if _, err := hex.DecodeString(id); !ok || err != nil || len(id) != 2*len(asideID{}) {
-		return false
+		return "", false
 	}
 	for _, p := range Programs {
 		if strings.EqualFold(file, p) || strings.EqualFold(file, old(p)) {
-			return true
+			return file, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // base is the last element of path, a Windows path, whose separator
@@ -346,6 +394,48 @@ func (in Install) removeOld() {
 		} else if err != nil {
 			in.logf("Couldn't delete %s: %v", path, err)
 		}
+	}
+}
+
+// trayOpen reports whether the tray app is open at the desktop. Looked
+// for before the agent stops, one that's open is the old version's,
+// which starts itself again once the new agent runs, and which a look
+// later might miss as it ends. Not knowing is no tray app: startTray
+// looks again.
+func (in Install) trayOpen() bool {
+	if in.Layout.Prefix != "" {
+		return false
+	}
+	open, err := in.Machine.TrayOpen(in.Layout.IsTray)
+	return err == nil && open
+}
+
+// startTray starts the tray app for the account at the desktop, unless
+// it was open there before the agent restarted, or is now, and says
+// what it did. A test's layout starts none: its tray app would read the
+// machine's own agent, whose control channel every tray app reads, not
+// the test's.
+func (in Install) startTray(open bool) {
+	l := in.Layout
+	if l.Prefix != "" {
+		return
+	}
+	if open {
+		in.logf("The tray app is open at this desktop.")
+		return
+	}
+	user, did, err := in.Machine.StartTray(l.TrayProgram(), l.RunCommand(), l.IsTray)
+	switch {
+	case err != nil && user != "":
+		in.logf("Couldn't start the tray app for %s: %v. It starts when they next sign in.", user, err)
+	case err != nil:
+		in.logf("Couldn't start the tray app: %v. It starts when an administrator next signs in.", err)
+	case did == TrayStarted:
+		in.logf("Started the tray app for %s.", user)
+	case did == TrayOpen:
+		in.logf("The tray app is open for %s.", user)
+	default:
+		in.logf("This session has no desktop, so the tray app starts when an administrator next signs in.")
 	}
 }
 

@@ -76,8 +76,8 @@ The Hub can listen on port 443 without running as root: its service holds only t
 
 ## Its URL and its key
 
-- **To change the Hub's URL,** run `sudo silkpool-hub set-url <url>`. It prints the nodes to re-point, and on each of them, an administrator runs `sudo silkpool set-hub-url <url>`. The Hub never moves its nodes itself.
-- **Switching between the self-signed certificate and a trusted one, or losing the Hub's key,** means enrolling every node again: on each node, `sudo silkpool remove --force`, then `sudo silkpool enroll <code>` with a new code.
+- **To change the Hub's URL,** run `sudo silkpool-hub set-url <url>`. It prints the nodes to re-point, and on each of them, an administrator runs `sudo silkpool set-hub-url <url>`, or on Windows `silkpool set-hub-url <url>` in a PowerShell run as administrator. The Hub never moves its nodes itself.
+- **Switching between the self-signed certificate and a trusted one, or losing the Hub's key,** means enrolling every node again: on each node, `sudo silkpool remove --force`, then `sudo silkpool enroll <code>` with a new code. On Windows, run them without `sudo`, in a PowerShell run as administrator.
 
 ## The Hub's machine
 

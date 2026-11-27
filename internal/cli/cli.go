@@ -17,7 +17,6 @@ package cli
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -68,10 +67,10 @@ type Env struct {
 	// StartCommand is the command that starts the service, which the CLI
 	// names when it isn't running.
 	StartCommand string
-	// Elevate says how to run a command that needs elevation, as in
-	// "enroll changes this machine's accounts, so run it <Elevate>.", or
-	// is empty for "with sudo".
-	Elevate string
+	// Windows reports that the CLI runs on Windows, where a command that
+	// needs elevation runs in a PowerShell run as administrator, not with
+	// sudo (wording.Elevation).
+	Windows bool
 	// NewID returns a new command ID, or is nil for a random one.
 	NewID func() string
 	// SmartAppControl reads Windows' Smart App Control, which enroll
@@ -85,7 +84,9 @@ type Env struct {
 	ExecutionPolicy func() []winexecpolicy.Reading
 }
 
-// usage is the help, which leaves out the commands only the OS runs.
+// usage is the help, which leaves out the commands only the OS runs. Its
+// %[1]s is what the commands that need elevation need, as
+// wording.Elevation.Needs says it for the CLI's OS.
 const usage = `Usage: silkpool <command> [flags]
 
 Commands:
@@ -97,14 +98,20 @@ Commands:
   auto-resume [on|set|off] [flags]   Show or change when a pause ends by itself.
   slot-limit [<n>] [--revision N]    Show or change how many slots this node has.
   budget [--memory|--cpus|--none]    Show or change the memory and CPU its slots may use.
-  enroll <code> [--name <name>]      Enroll this machine in a Hub. Needs sudo.
-  remove [--force] [--yes] [--json]  Remove this machine from its Hub. Needs sudo.
-  set-hub-url <url> [--json]         Point this node at its Hub's new URL. Needs sudo.
+  enroll <code> [--name <name>]      Enroll this machine in a Hub. %[1]s
+  remove [--force] [--yes] [--json]  Remove this machine from its Hub. %[1]s
+  set-hub-url <url> [--json]         Point this node at its Hub's new URL. %[1]s
   diagnostics [--json]               Print the diagnostics report.
   version [--json]                   Print the CLI's and the service's versions.
 
 Only administrators can use Silkpool on this machine.
 `
+
+// help is the help on an OS that runs the commands that need elevation
+// as e says.
+func help(e wording.Elevation) string {
+	return fmt.Sprintf(usage, e.Needs())
+}
 
 // Run runs the CLI with args, the command line after the program's
 // name, and returns its exit code.
@@ -116,6 +123,7 @@ func Run(ctx context.Context, args []string, env Env) int {
 		env.Getenv = func(string) string { return "" }
 	}
 	s := &session{env: env, color: env.StdoutTerminal && env.Getenv("NO_COLOR") == ""}
+	usage := help(s.elevation())
 	if len(args) == 0 {
 		fmt.Fprint(env.Stderr, usage)
 		return ExitUsage
@@ -170,6 +178,11 @@ type session struct {
 	// tray reports that the session is the tray app's, whose commands
 	// come from the tray.
 	tray bool
+}
+
+// elevation is how the CLI's OS runs the commands that need it.
+func (s *session) elevation() wording.Elevation {
+	return wording.Elevation{Windows: s.env.Windows}
 }
 
 func (s *session) close() {
@@ -286,7 +299,7 @@ func (s *session) elevated(why string) int {
 	if s.client.Hello.Elevated {
 		return ExitOK
 	}
-	return s.cantAsk(control.CodeNotElevated, why+", so run it "+cmp.Or(s.env.Elevate, "with sudo")+".")
+	return s.cantAsk(control.CodeNotElevated, why+", so run it "+s.elevation().RunIt()+".")
 }
 
 // a read is the status the CLI read, decoded, with its view.

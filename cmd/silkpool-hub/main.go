@@ -25,6 +25,7 @@ import (
 	"github.com/meschoening/silkpool/internal/hubops"
 	"github.com/meschoening/silkpool/internal/hubservice"
 	"github.com/meschoening/silkpool/internal/hubsocket"
+	"github.com/meschoening/silkpool/internal/terminal"
 	"github.com/meschoening/silkpool/internal/version"
 )
 
@@ -43,7 +44,7 @@ func main() {
 		Stdin:         os.Stdin,
 		Stdout:        os.Stdout,
 		Stderr:        os.Stderr,
-		StdinTerminal: terminal(os.Stdin),
+		StdinTerminal: terminal.Is(os.Stdin),
 		Socket:        hubsocket.Path,
 		ServerUID:     uidOf(account),
 		Version:       version.Version,
@@ -128,10 +129,4 @@ func systemctl(ctx context.Context, args ...string) error {
 		return err
 	}
 	return nil
-}
-
-// terminal reports whether f is a terminal.
-func terminal(f *os.File) bool {
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

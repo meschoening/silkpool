@@ -187,25 +187,33 @@ func parseAt(text string) (availability.TimeOfDay, bool) {
 // dayNames are the days as --days names them, Monday first.
 var dayNames = []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
-// parseDays parses --days: three-letter names, comma lists and ranges,
-// as mon-fri or mon,wed,fri. A range runs Monday to Sunday, and one that
+// parseDays parses --days: three-letter names, lists and ranges, as
+// mon-fri, mon,wed,fri or mon wed fri. Commas or spaces separate a
+// list's items, so the days status --json lists, joined either way, are
+// days it takes (#365). A range runs Monday to Sunday, and one that
 // passes Sunday wraps round to Monday, so fri-mon is a long weekend.
 func parseDays(text string) (availability.Weekdays, bool) {
 	var w availability.Weekdays
 	for _, part := range strings.Split(text, ",") {
-		from, to, isRange := strings.Cut(part, "-")
-		first := slices.Index(dayNames, strings.ToLower(from))
-		last := first
-		if isRange {
-			last = slices.Index(dayNames, strings.ToLower(to))
-		}
-		if first < 0 || last < 0 {
+		items := strings.Fields(part)
+		if len(items) == 0 {
 			return 0, false
 		}
-		for i := first; ; i = (i + 1) % 7 {
-			w |= availability.DaysOf(time.Weekday((i + 1) % 7))
-			if i == last {
-				break
+		for _, item := range items {
+			from, to, isRange := strings.Cut(item, "-")
+			first := slices.Index(dayNames, strings.ToLower(from))
+			last := first
+			if isRange {
+				last = slices.Index(dayNames, strings.ToLower(to))
+			}
+			if first < 0 || last < 0 {
+				return 0, false
+			}
+			for i := first; ; i = (i + 1) % 7 {
+				w |= availability.DaysOf(time.Weekday((i + 1) % 7))
+				if i == last {
+					break
+				}
 			}
 		}
 	}
